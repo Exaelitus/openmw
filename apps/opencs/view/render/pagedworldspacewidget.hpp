@@ -11,6 +11,7 @@
 namespace CSVWidget
 {
    class SceneToolToggle;
+   class SceneToolToggle2;
 }
 
 namespace CSVRender
@@ -26,7 +27,7 @@ namespace CSVRender
             CSMWorld::CellSelection mSelection;
             std::map<CSMWorld::CellCoordinates, Cell *> mCells;
             std::string mWorldspace;
-            CSVWidget::SceneToolToggle *mControlElements;
+            CSVWidget::SceneToolToggle2 *mControlElements;
             bool mDisplayCellCoord;
 
         private:
@@ -51,6 +52,12 @@ namespace CSVRender
 
             virtual void referenceAdded (const QModelIndex& index, int start, int end);
 
+            virtual void pathgridDataChanged (const QModelIndex& topLeft, const QModelIndex& bottomRight);
+
+            virtual void pathgridAboutToBeRemoved (const QModelIndex& parent, int start, int end);
+
+            virtual void pathgridAdded (const QModelIndex& parent, int start, int end);
+
             virtual std::string getStartupInstruction();
 
             /// \note Does not update the view or any cell marker
@@ -67,6 +74,8 @@ namespace CSVRender
             /// \note Does not update the view or any cell marker
             void moveCellSelection (int x, int y);
 
+            void addCellToSceneFromCamera (int offsetX, int offsetY);
+
         public:
 
             PagedWorldspaceWidget (QWidget *parent, CSMDoc::Document& document);
@@ -76,6 +85,7 @@ namespace CSVRender
 
             virtual ~PagedWorldspaceWidget();
 
+            /// Decodes the the hint string to set of cell that are rendered.
             void useViewHint (const std::string& hint);
 
             void setCellSelection(const CSMWorld::CellSelection& selection);
@@ -90,13 +100,16 @@ namespace CSVRender
 
             /// \attention The created tool is not added to the toolbar (via addTool). Doing
             /// that is the responsibility of the calling function.
-            virtual CSVWidget::SceneToolToggle *makeControlVisibilitySelector (
+            virtual CSVWidget::SceneToolToggle2 *makeControlVisibilitySelector (
                 CSVWidget::SceneToolbar *parent);
 
             virtual unsigned int getVisibilityMask() const;
 
             /// \param elementMask Elements to be affected by the clear operation
             virtual void clearSelection (int elementMask);
+
+            /// \param elementMask Elements to be affected by the select operation
+            virtual void invertSelection (int elementMask);
 
             /// \param elementMask Elements to be affected by the select operation
             virtual void selectAll (int elementMask);
@@ -108,6 +121,16 @@ namespace CSVRender
             virtual void selectAllWithSameParentId (int elementMask);
 
             virtual std::string getCellId (const osg::Vec3f& point) const;
+
+            virtual Cell* getCell(const osg::Vec3d& point) const;
+
+            virtual Cell* getCell(const CSMWorld::CellCoordinates& coords) const;
+
+            void setCellAlteredHeight(const CSMWorld::CellCoordinates& coords, int inCellX, int inCellY, float height);
+
+            float* getCellAlteredHeight(const CSMWorld::CellCoordinates& coords, int inCellX, int inCellY);
+
+            void resetAllAlteredHeights();
 
             virtual std::vector<osg::ref_ptr<TagBase> > getSelection (unsigned int elementMask)
                 const;
@@ -126,7 +149,7 @@ namespace CSVRender
 
             virtual void addEditModeSelectorButtons (CSVWidget::SceneToolMode *tool);
 
-            virtual void handleMouseClick (osg::ref_ptr<TagBase> tag, const std::string& button, bool shift);
+            virtual void handleInteractionPress (const WorldspaceHitResult& hit, InteractionType type);
 
         signals:
 
@@ -139,6 +162,26 @@ namespace CSVRender
             virtual void cellRemoved (const QModelIndex& parent, int start, int end);
 
             virtual void cellAdded (const QModelIndex& index, int start, int end);
+
+            virtual void landDataChanged (const QModelIndex& topLeft, const QModelIndex& botomRight);
+            virtual void landAboutToBeRemoved (const QModelIndex& parent, int start, int end);
+            virtual void landAdded (const QModelIndex& parent, int start, int end);
+
+            virtual void landTextureDataChanged (const QModelIndex& topLeft, const QModelIndex& botomRight);
+            virtual void landTextureAboutToBeRemoved (const QModelIndex& parent, int start, int end);
+            virtual void landTextureAdded (const QModelIndex& parent, int start, int end);
+
+            void assetTablesChanged ();
+
+            void loadCameraCell();
+
+            void loadEastCell();
+
+            void loadNorthCell();
+
+            void loadWestCell();
+
+            void loadSouthCell();
 
     };
 }

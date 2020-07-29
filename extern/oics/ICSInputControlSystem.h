@@ -32,8 +32,6 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "ICSControl.h"
 #include "ICSChannel.h"
 
-#include "boost/lexical_cast.hpp"
-
 #define ICS_LOG(text) if(mLog) mLog->logMessage( ("ICS: " + std::string(text)).c_str() );
 #define ICS_MAX_JOYSTICK_AXIS 16
 #define ICS_MOUSE_BINDING_MARGIN 30
@@ -47,6 +45,8 @@ namespace ICS
 	{
 	public:
 		virtual void logMessage(const char* text) = 0;
+
+		virtual ~InputControlSystemLog() = default;
 	};
 
     class DllExport InputControlSystem
@@ -78,6 +78,8 @@ namespace ICS
 
 		void setDetectingBindingListener(DetectingBindingListener* detectingBindingListener){ mDetectingBindingListener = detectingBindingListener; };
 		DetectingBindingListener* getDetectingBindingListener(){ return mDetectingBindingListener; };
+
+		void setJoystickDeadZone(float deadZone){ mDeadZone = deadZone; };
 
 		// in seconds
 		void update(float timeSinceLastFrame);
@@ -122,6 +124,8 @@ namespace ICS
         bool isMouseButtonBound(unsigned int button) const;
         void addJoystickAxisBinding(Control* control, int deviceID, int axis, Control::ControlChangingDirection direction);
 		void addJoystickButtonBinding(Control* control, int deviceID, unsigned int button, Control::ControlChangingDirection direction);
+		bool isJoystickButtonBound(int deviceID, unsigned int button) const;
+		bool isJoystickAxisBound(int deviceID, unsigned int axis) const;
         void removeKeyBinding(SDL_Scancode key);
 		void removeMouseAxisBinding(NamedAxis axis);
 		void removeMouseButtonBinding(unsigned int button);
@@ -178,6 +182,8 @@ namespace ICS
 
 		std::string mFileName;
 
+		float mDeadZone;
+
         typedef std::map<SDL_Scancode, ControlKeyBinderItem> ControlsKeyBinderMapType;	// <Scancode, [direction, control]>
 		typedef std::map<int, ControlAxisBinderItem> ControlsAxisBinderMapType;			// <axis, [direction, control]>
 		typedef std::map<int, ControlButtonBinderItem> ControlsButtonBinderMapType;		// <button, [direction, control]>
@@ -214,6 +220,26 @@ namespace ICS
 
 		Uint16 mClientWidth;
 		Uint16 mClientHeight;
+
+		/* ----------------------------------------------------------------------------------------
+		 * OPENMW CODE STARTS HERE
+		 * Mouse Wheel support added by Michael Stopa (Stomy) */
+
+	public:
+		enum class MouseWheelClick : int { UNASSIGNED = 0, UP = 1, DOWN = 2, LEFT = 3, RIGHT = 4};
+
+		void mouseWheelMoved(const SDL_MouseWheelEvent &evt);
+		void addMouseWheelBinding(Control* control, MouseWheelClick click, Control::ControlChangingDirection direction);
+		void removeMouseWheelBinding(MouseWheelClick click);
+		MouseWheelClick getMouseWheelBinding(Control* control, ICS::Control::ControlChangingDirection direction);
+		bool isMouseWheelBound(MouseWheelClick button) const;
+
+	protected:
+		void loadMouseWheelBinders(TiXmlElement* xmlControlNode);
+		ControlsButtonBinderMapType mControlsMouseWheelBinderMap;
+
+		/* OPENMW CODE ENDS HERE
+		 * ------------------------------------------------------------------------------------- */
 	};
 
 	class DllExport DetectingBindingListener
@@ -234,9 +260,21 @@ namespace ICS
 		virtual void joystickButtonBindingDetected(InputControlSystem* ICS, int deviceID, Control* control
 			, unsigned int button, Control::ControlChangingDirection direction);
 
+		/* ----------------------------------------------------------------------------------------
+		 * OPENMW CODE STARTS HERE
+		 * Mouse Wheel support added by Michael Stopa (Stomy) */
+
+		virtual void mouseWheelBindingDetected(InputControlSystem* ICS, Control* control,
+		                                       InputControlSystem::MouseWheelClick click,
+		                                       Control::ControlChangingDirection direction);
+
+        virtual ~DetectingBindingListener() = default;
+
+		/* OPENMW CODE ENDS HERE
+		 * ------------------------------------------------------------------------------------- */
 	};
 
-	static const float ICS_MAX = std::numeric_limits<float>::max();
+	extern const float ICS_MAX;
 }
 
 

@@ -1,9 +1,9 @@
 #include "recharge.hpp"
 
-#include <boost/format.hpp>
-
 #include <MyGUI_ScrollView.h>
 #include <MyGUI_Gui.h>
+
+#include <components/widgets/box.hpp>
 
 #include <components/misc/rng.hpp>
 
@@ -16,47 +16,52 @@
 #include "../mwworld/esmstore.hpp"
 
 #include "../mwmechanics/creaturestats.hpp"
-#include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/recharge.hpp"
 
-#include "widgets.hpp"
 #include "itemwidget.hpp"
+#include "itemchargeview.hpp"
+#include "sortfilteritemmodel.hpp"
+#include "inventoryitemmodel.hpp"
 
 namespace MWGui
 {
 
 Recharge::Recharge()
     : WindowBase("openmw_recharge_dialog.layout")
+    , mItemSelectionDialog(nullptr)
 {
     getWidget(mBox, "Box");
-    getWidget(mView, "View");
     getWidget(mGemBox, "GemBox");
     getWidget(mGemIcon, "GemIcon");
     getWidget(mChargeLabel, "ChargeLabel");
     getWidget(mCancelButton, "CancelButton");
 
     mCancelButton->eventMouseButtonClick += MyGUI::newDelegate(this, &Recharge::onCancel);
+    mBox->eventItemClicked += MyGUI::newDelegate(this, &Recharge::onItemClicked);
 
-    setVisible(false);
+    mBox->setDisplayMode(ItemChargeView::DisplayMode_EnchantmentCharge);
+
+    mGemIcon->eventMouseButtonClick += MyGUI::newDelegate(this, &Recharge::onSelectItem);
 }
 
-void Recharge::open()
+void Recharge::onOpen()
 {
     center();
+
+    SortFilterItemModel * model = new SortFilterItemModel(new InventoryItemModel(MWMechanics::getPlayer()));
+    model->setFilter(SortFilterItemModel::Filter_OnlyRechargable);
+    mBox->setModel(model);
+
     // Reset scrollbars
-    mView->setViewOffset(MyGUI::IntPoint(0, 0));
+    mBox->resetScrollbars();
 }
 
-void Recharge::exit()
-{
-    MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Recharge);
-}
-
-void Recharge::start (const MWWorld::Ptr &item)
+void Recharge::setPtr (const MWWorld::Ptr &item)
 {
     mGemIcon->setItem(item);
     mGemIcon->setUserString("ToolTipType", "ItemPtr");
-    mGemIcon->setUserData(item);
+    mGemIcon->setUserData(MWWorld::Ptr(item));
 
     updateView();
 }
@@ -72,138 +77,64 @@ void Recharge::updateView()
 
     bool toolBoxVisible = (gem.getRefData().getCount() != 0);
     mGemBox->setVisible(toolBoxVisible);
+    mGemBox->setUserString("Hidden", toolBoxVisible ? "false" : "true");
 
-    bool toolBoxWasVisible = (mBox->getPosition().top != mGemBox->getPosition().top);
-
-    if (toolBoxVisible && !toolBoxWasVisible)
+    if (!toolBoxVisible)
     {
-        // shrink
-        mBox->setPosition(mBox->getPosition() + MyGUI::IntPoint(0, mGemBox->getSize().height));
-        mBox->setSize(mBox->getSize() - MyGUI::IntSize(0,mGemBox->getSize().height));
-    }
-    else if (!toolBoxVisible && toolBoxWasVisible)
-    {
-        // expand
-        mBox->setPosition(MyGUI::IntPoint (mBox->getPosition().left, mGemBox->getPosition().top));
-        mBox->setSize(mBox->getSize() + MyGUI::IntSize(0,mGemBox->getSize().height));
+        mGemIcon->setItem(MWWorld::Ptr());
+        mGemIcon->clearUserStrings();
     }
 
-    while (mView->getChildCount())
-        MyGUI::Gui::getInstance().destroyWidget(mView->getChildAt(0));
+    mBox->update();
 
-    int currentY = 0;
+    Gui::Box* box = dynamic_cast<Gui::Box*>(mMainWidget);
+    if (box == nullptr)
+        throw std::runtime_error("main widget must be a box");
 
-    MWWorld::Ptr player = MWMechanics::getPlayer();
-    MWWorld::ContainerStore& store = player.getClass().getContainerStore(player);
-    for (MWWorld::ContainerStoreIterator iter (store.begin());
-         iter!=store.end(); ++iter)
-    {
-        std::string enchantmentName = iter->getClass().getEnchantment(*iter);
-        if (enchantmentName.empty())
-            continue;
-        const ESM::Enchantment* enchantment = MWBase::Environment::get().getWorld()->getStore().get<ESM::Enchantment>().find(enchantmentName);
-        if (iter->getCellRef().getEnchantmentCharge() >= enchantment->mData.mCharge
-                || iter->getCellRef().getEnchantmentCharge() == -1)
-            continue;
-
-        MyGUI::TextBox* text = mView->createWidget<MyGUI::TextBox> (
-                    "SandText", MyGUI::IntCoord(8, currentY, mView->getWidth()-8, 18), MyGUI::Align::Default);
-        text->setCaption(iter->getClass().getName(*iter));
-        text->setNeedMouseFocus(false);
-        currentY += 19;
-
-        ItemWidget* icon = mView->createWidget<ItemWidget> (
-                    "MW_ItemIconSmall", MyGUI::IntCoord(16, currentY, 32, 32), MyGUI::Align::Default);
-        icon->setItem(*iter);
-        icon->setUserString("ToolTipType", "ItemPtr");
-        icon->setUserData(*iter);
-        icon->eventMouseButtonClick += MyGUI::newDelegate(this, &Recharge::onItemClicked);
-        icon->eventMouseWheel += MyGUI::newDelegate(this, &Recharge::onMouseWheel);
-
-        Widgets::MWDynamicStatPtr chargeWidget = mView->createWidget<Widgets::MWDynamicStat>
-                ("MW_ChargeBar", MyGUI::IntCoord(72, currentY+2, 199, 20), MyGUI::Align::Default);
-        chargeWidget->setValue(static_cast<int>(iter->getCellRef().getEnchantmentCharge()), enchantment->mData.mCharge);
-        chargeWidget->setNeedMouseFocus(false);
-
-        currentY += 32 + 4;
-    }
-
-    // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the scrollbar is hidden
-    mView->setVisibleVScroll(false);
-    mView->setCanvasSize (MyGUI::IntSize(mView->getWidth(), std::max(mView->getHeight(), currentY)));
-    mView->setVisibleVScroll(true);
+    box->notifyChildrenSizeChanged();
+    center();
 }
 
 void Recharge::onCancel(MyGUI::Widget *sender)
 {
-    exit();
+    MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Recharge);
 }
 
-void Recharge::onItemClicked(MyGUI::Widget *sender)
+void Recharge::onSelectItem(MyGUI::Widget *sender)
 {
-    MWWorld::Ptr gem = *mGemIcon->getUserData<MWWorld::Ptr>();
+    delete mItemSelectionDialog;
+    mItemSelectionDialog = new ItemSelectionDialog("#{sSoulGemsWithSouls}");
+    mItemSelectionDialog->eventItemSelected += MyGUI::newDelegate(this, &Recharge::onItemSelected);
+    mItemSelectionDialog->eventDialogCanceled += MyGUI::newDelegate(this, &Recharge::onItemCancel);
+    mItemSelectionDialog->setVisible(true);
+    mItemSelectionDialog->openContainer(MWMechanics::getPlayer());
+    mItemSelectionDialog->setFilter(SortFilterItemModel::Filter_OnlyChargedSoulstones);
+}
 
-    if (!gem.getRefData().getCount())
-        return;
+void Recharge::onItemSelected(MWWorld::Ptr item)
+{
+    mItemSelectionDialog->setVisible(false);
 
-    MWWorld::Ptr item = *sender->getUserData<MWWorld::Ptr>();
+    mGemIcon->setItem(item);
+    mGemIcon->setUserString ("ToolTipType", "ItemPtr");
+    mGemIcon->setUserData(item);
 
-    MWWorld::Ptr player = MWMechanics::getPlayer();
-    MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
-    MWMechanics::NpcStats& npcStats = player.getClass().getNpcStats(player);
-
-    float luckTerm = 0.1f * stats.getAttribute(ESM::Attribute::Luck).getModified();
-    if (luckTerm < 1|| luckTerm > 10)
-        luckTerm = 1;
-
-    float intelligenceTerm = 0.2f * stats.getAttribute(ESM::Attribute::Intelligence).getModified();
-
-    if (intelligenceTerm > 20)
-        intelligenceTerm = 20;
-    if (intelligenceTerm < 1)
-        intelligenceTerm = 1;
-
-    float x = (npcStats.getSkill(ESM::Skill::Enchant).getModified() + intelligenceTerm + luckTerm) * stats.getFatigueTerm();
-    int roll = Misc::Rng::roll0to99();
-    if (roll < x)
-    {
-        std::string soul = gem.getCellRef().getSoul();
-        const ESM::Creature *creature = MWBase::Environment::get().getWorld()->getStore().get<ESM::Creature>().find(soul);
-
-        float restored = creature->mData.mSoul * (roll / x);
-
-        const ESM::Enchantment* enchantment = MWBase::Environment::get().getWorld()->getStore().get<ESM::Enchantment>().find(
-                    item.getClass().getEnchantment(item));
-        item.getCellRef().setEnchantmentCharge(
-            std::min(item.getCellRef().getEnchantmentCharge() + restored, static_cast<float>(enchantment->mData.mCharge)));
-
-        player.getClass().getContainerStore(player).restack(item);
-
-        player.getClass().skillUsageSucceeded (player, ESM::Skill::Enchant, 0);
-    }
-
-    gem.getContainerStore()->remove(gem, 1, player);
-
-    if (gem.getRefData().getCount() == 0)
-    {
-        std::string message = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find("sNotifyMessage51")->getString();
-        message = boost::str(boost::format(message) % gem.getClass().getName(gem));
-        MWBase::Environment::get().getWindowManager()->messageBox(message);
-
-        // special case: readd Azura's Star
-        if (Misc::StringUtils::ciEqual(gem.get<ESM::Miscellaneous>()->mBase->mId, "Misc_SoulGem_Azura"))
-            player.getClass().getContainerStore(player).add("Misc_SoulGem_Azura", 1, player);
-    }
-
+    MWBase::Environment::get().getWindowManager()->playSound(item.getClass().getDownSoundId(item));
     updateView();
 }
 
-void Recharge::onMouseWheel(MyGUI::Widget* _sender, int _rel)
+void Recharge::onItemCancel()
 {
-    if (mView->getViewOffset().top + _rel*0.3f > 0)
-        mView->setViewOffset(MyGUI::IntPoint(0, 0));
-    else
-        mView->setViewOffset(MyGUI::IntPoint(0, static_cast<int>(mView->getViewOffset().top + _rel*0.3f)));
+    mItemSelectionDialog->setVisible(false);
+}
+
+void Recharge::onItemClicked(MyGUI::Widget *sender, const MWWorld::Ptr& item)
+{
+    MWWorld::Ptr gem = *mGemIcon->getUserData<MWWorld::Ptr>();
+    if (!MWMechanics::rechargeItem(item, gem))
+        return;
+
+    updateView();
 }
 
 }

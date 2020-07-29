@@ -70,7 +70,7 @@ const ContentSelectorModel::EsmFile *ContentSelectorModel::ContentModel::item(co
     if (name.contains ('/'))
         fp = EsmFile::FileProperty_FilePath;
 
-    foreach (const EsmFile *file, mFiles)
+    for (const EsmFile *file : mFiles)
     {
         if (name.compare(file->fileProperty (fp).toString(), Qt::CaseInsensitive) == 0)
             return file;
@@ -108,28 +108,28 @@ Qt::ItemFlags ContentSelectorModel::ContentModel::flags(const QModelIndex &index
     // addon can be checked if its gamefile is
     // ... special case, addon with no dependency can be used with any gamefile.
     bool gamefileChecked = (file->gameFiles().count() == 0);
-    foreach (const QString &fileName, file->gameFiles())
+    for (const QString &fileName : file->gameFiles())
     {
-        foreach (EsmFile *dependency, mFiles)
+        for (QListIterator<EsmFile *> dependencyIter(mFiles); dependencyIter.hasNext(); dependencyIter.next())
         {
             //compare filenames only.  Multiple instances
             //of the filename (with different paths) is not relevant here.
-            bool depFound = (dependency->fileName().compare(fileName, Qt::CaseInsensitive) == 0);
+            bool depFound = (dependencyIter.peekNext()->fileName().compare(fileName, Qt::CaseInsensitive) == 0);
 
             if (!depFound)
                 continue;
 
             if (!gamefileChecked)
             {
-                if (isChecked (dependency->filePath()))
-                    gamefileChecked = (dependency->isGameFile());
+                if (isChecked (dependencyIter.peekNext()->filePath()))
+                    gamefileChecked = (dependencyIter.peekNext()->isGameFile());
             }
 
             // force it to iterate all files in cases where the current
             // dependency is a game file to ensure that a later duplicate
             // game file is / is not checked.
             // (i.e., break only if it's not a gamefile or the game file has been checked previously)
-            if (gamefileChecked || !(dependency->isGameFile()))
+            if (gamefileChecked || !(dependencyIter.peekNext()->isGameFile()))
                 break;
         }
     }
@@ -168,7 +168,7 @@ QVariant ContentSelectorModel::ContentModel::data(const QModelIndex &index, int 
     case Qt::DisplayRole:
     {
         if (column >=0 && column <=EsmFile::FileProperty_GameFile)
-            return file->fileProperty(static_cast<const EsmFile::FileProperty>(column));
+            return file->fileProperty(static_cast<EsmFile::FileProperty>(column));
 
         return QVariant();
     }
@@ -283,12 +283,11 @@ bool ContentSelectorModel::ContentModel::setData(const QModelIndex &index, const
             else
                 return success;
 
-
-            foreach (EsmFile *file, mFiles)
+            for (EsmFile *file2 : mFiles)
             {
-                if (file->gameFiles().contains(fileName, Qt::CaseInsensitive))
+                if (file2->gameFiles().contains(fileName, Qt::CaseInsensitive))
                 {
-                    QModelIndex idx = indexFromItem(file);
+                    QModelIndex idx = indexFromItem(file2);
                     emit dataChanged(idx, idx);
                 }
             }
@@ -347,7 +346,7 @@ QMimeData *ContentSelectorModel::ContentModel::mimeData(const QModelIndexList &i
 {
     QByteArray encodedData;
 
-    foreach (const QModelIndex &index, indexes)
+    for (const QModelIndex &index : indexes)
     {
         if (!index.isValid())
             continue;
@@ -425,11 +424,11 @@ void ContentSelectorModel::ContentModel::addFiles(const QString &path)
     filters << "*.esp" << "*.esm" << "*.omwgame" << "*.omwaddon";
     dir.setNameFilters(filters);
 
-    foreach (const QString &path, dir.entryList())
+    for (const QString &path2 : dir.entryList())
     {
-        QFileInfo info(dir.absoluteFilePath(path));
+        QFileInfo info(dir.absoluteFilePath(path2));
 
-        if (item(info.absoluteFilePath()) != 0)
+        if (item(info.fileName()))
             continue;
 
         try {
@@ -437,12 +436,13 @@ void ContentSelectorModel::ContentModel::addFiles(const QString &path)
             ToUTF8::Utf8Encoder encoder =
             ToUTF8::calculateEncoding(mEncoding.toStdString());
             fileReader.setEncoder(&encoder);
-            fileReader.open(std::string(dir.absoluteFilePath(path).toUtf8().constData()));
+            fileReader.open(std::string(dir.absoluteFilePath(path2).toUtf8().constData()));
 
-            EsmFile *file = new EsmFile(path);
-
-            foreach (const ESM::Header::MasterData &item, fileReader.getGameFiles())
-                file->addGameFile(QString::fromUtf8(item.name.c_str()));
+            EsmFile *file = new EsmFile(path2);
+         
+            for (std::vector<ESM::Header::MasterData>::const_iterator itemIter = fileReader.getGameFiles().begin();
+                itemIter != fileReader.getGameFiles().end(); ++itemIter)
+                file->addGameFile(QString::fromUtf8(itemIter->name.c_str()));
 
             file->setAuthor     (QString::fromUtf8(fileReader.getAuthor().c_str()));
             file->setDate       (info.lastModified());
@@ -474,15 +474,19 @@ void ContentSelectorModel::ContentModel::addFiles(const QString &path)
 
 void ContentSelectorModel::ContentModel::clearFiles()
 {
-    beginRemoveRows(QModelIndex(), 0, mFiles.count()-1);
-    mFiles.clear();
-    endRemoveRows();
+    const int filesCount = mFiles.count();
+
+    if (filesCount > 0) {
+        beginRemoveRows(QModelIndex(), 0, filesCount - 1);
+        mFiles.clear();
+        endRemoveRows();
+    }
 }
 
 QStringList ContentSelectorModel::ContentModel::gameFiles() const
 {
     QStringList gameFiles;
-    foreach(const ContentSelectorModel::EsmFile *file, mFiles)
+    for (const ContentSelectorModel::EsmFile *file : mFiles)
     {
         if (file->isGameFile())
         {
@@ -512,7 +516,9 @@ void ContentSelectorModel::ContentModel::sortFiles()
             //dependencies appear.
             for (int j = i + 1; j < fileCount; j++)
             {
-                if (gamefiles.contains(mFiles.at(j)->fileName(), Qt::CaseInsensitive))
+                if (gamefiles.contains(mFiles.at(j)->fileName(), Qt::CaseInsensitive)
+                 || (!mFiles.at(i)->isGameFile() && gamefiles.isEmpty()
+                 && mFiles.at(j)->fileName().compare("Morrowind.esm", Qt::CaseInsensitive) == 0)) // Hack: implicit dependency on Morrowind.esm for dependency-less files
                 {
                         mFiles.move(j, i);
 
@@ -551,7 +557,7 @@ void ContentSelectorModel::ContentModel::setContentList(const QStringList &fileL
 {
     mPluginsWithLoadOrderError.clear();
     int previousPosition = -1;
-    foreach (const QString &filepath, fileList)
+    for (const QString &filepath : fileList)
     {
         if (setCheckState(filepath, true))
         {
@@ -592,7 +598,7 @@ void ContentSelectorModel::ContentModel::checkForLoadOrderErrors()
 QList<ContentSelectorModel::LoadOrderError> ContentSelectorModel::ContentModel::checkForLoadOrderErrors(const EsmFile *file, int row) const
 {
     QList<LoadOrderError> errors = QList<LoadOrderError>();
-    foreach(const QString &dependentfileName, file->gameFiles())
+    for (const QString &dependentfileName : file->gameFiles())
     {
         const EsmFile* dependentFile = item(dependentfileName);
 
@@ -621,7 +627,7 @@ QString ContentSelectorModel::ContentModel::toolTip(const EsmFile *file) const
     {
         QString text("<b>");
         int index = indexFromItem(item(file->filePath())).row();
-        foreach(const LoadOrderError& error, checkForLoadOrderErrors(file, index))
+        for (const LoadOrderError& error : checkForLoadOrderErrors(file, index))
         {
             text += "<p>";
             text += error.toolTip();
@@ -666,7 +672,7 @@ bool ContentSelectorModel::ContentModel::setCheckState(const QString &filepath, 
     //if we're checking an item, ensure all "upstream" files (dependencies) are checked as well.
     if (state == Qt::Checked)
     {
-        foreach (QString upstreamName, file->gameFiles())
+        for (const QString& upstreamName : file->gameFiles())
         {
             const EsmFile *upstreamFile = item(upstreamName);
 
@@ -683,7 +689,7 @@ bool ContentSelectorModel::ContentModel::setCheckState(const QString &filepath, 
     //otherwise, if we're unchecking an item (or the file is a game file) ensure all downstream files are unchecked.
     if (state == Qt::Unchecked)
     {
-        foreach (const EsmFile *downstreamFile, mFiles)
+        for (const EsmFile *downstreamFile : mFiles)
         {
             QFileInfo fileInfo(filepath);
             QString filename = fileInfo.fileName();
@@ -708,7 +714,7 @@ ContentSelectorModel::ContentFileList ContentSelectorModel::ContentModel::checke
     // TODO:
     // First search for game files and next addons,
     // so we get more or less correct game files vs addons order.
-    foreach (EsmFile *file, mFiles)
+    for (EsmFile *file : mFiles)
         if (isChecked(file->filePath()))
             list << file;
 

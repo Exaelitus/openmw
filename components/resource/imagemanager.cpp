@@ -1,8 +1,9 @@
 #include "imagemanager.hpp"
 
+#include <cassert>
 #include <osgDB/Registry>
-#include <osg/GLExtensions>
 
+#include <components/debug/debuglog.hpp>
 #include <components/vfs/manager.hpp>
 
 #include "objectcache.hpp"
@@ -13,6 +14,9 @@ USE_OSGPLUGIN(png)
 USE_OSGPLUGIN(tga)
 USE_OSGPLUGIN(dds)
 USE_OSGPLUGIN(jpeg)
+USE_OSGPLUGIN(bmp)
+USE_OSGPLUGIN(osg)
+USE_SERIALIZER_WRAPPER_LIBRARY(osg)
 #endif
 
 namespace
@@ -43,7 +47,7 @@ namespace Resource
     ImageManager::ImageManager(const VFS::Manager *vfs)
         : ResourceManager(vfs)
         , mWarningImage(createWarningImage())
-        , mOptions(new osgDB::Options("dds_flip dds_dxt1_detect_rgba"))
+        , mOptions(new osgDB::Options("dds_flip dds_dxt1_detect_rgba ignoreTga2Fields"))
     {
     }
 
@@ -66,7 +70,6 @@ namespace Resource
                         // This one works too. Should it be included in isTextureCompressionS3TCSupported()? Submitted as a patch to OSG.
                         && !osg::isGLExtensionSupported(0, "GL_S3_s3tc"))
                 {
-                    std::cerr << "Error loading " << filename << ": no S3TC texture compression support installed" << std::endl;
                     return false;
                 }
                 break;
@@ -95,7 +98,7 @@ namespace Resource
             }
             catch (std::exception& e)
             {
-                std::cerr << "Failed to open image: " << e.what() << std::endl;
+                Log(Debug::Error) << "Failed to open image: " << e.what();
                 mCache->addEntryToObjectCache(normalized, mWarningImage);
                 return mWarningImage;
             }
@@ -107,7 +110,7 @@ namespace Resource
             osgDB::ReaderWriter* reader = osgDB::Registry::instance()->getReaderWriterForExtension(ext);
             if (!reader)
             {
-                std::cerr << "Error loading " << filename << ": no readerwriter for '" << ext << "' found" << std::endl;
+                Log(Debug::Error) << "Error loading " << filename << ": no readerwriter for '" << ext << "' found";
                 mCache->addEntryToObjectCache(normalized, mWarningImage);
                 return mWarningImage;
             }
@@ -115,17 +118,36 @@ namespace Resource
             osgDB::ReaderWriter::ReadResult result = reader->readImage(*stream, mOptions);
             if (!result.success())
             {
-                std::cerr << "Error loading " << filename << ": " << result.message() << " code " << result.status() << std::endl;
+                Log(Debug::Error) << "Error loading " << filename << ": " << result.message() << " code " << result.status();
                 mCache->addEntryToObjectCache(normalized, mWarningImage);
                 return mWarningImage;
             }
 
-            osg::Image* image = result.getImage();
+            osg::ref_ptr<osg::Image> image = result.getImage();
+
             image->setFileName(normalized);
             if (!checkSupported(image, filename))
             {
-                mCache->addEntryToObjectCache(normalized, mWarningImage);
-                return mWarningImage;
+                static bool uncompress = (getenv("OPENMW_DECOMPRESS_TEXTURES") != 0);
+                if (!uncompress)
+                {
+                    Log(Debug::Error) << "Error loading " << filename << ": no S3TC texture compression support installed";
+                    mCache->addEntryToObjectCache(normalized, mWarningImage);
+                    return mWarningImage;
+                }
+                else
+                {
+                    // decompress texture in software if not supported by GPU
+                    // requires update to getColor() to be released with OSG 3.6
+                    osg::ref_ptr<osg::Image> newImage = new osg::Image;
+                    newImage->setFileName(image->getFileName());
+                    newImage->allocateImage(image->s(), image->t(), image->r(), image->isImageTranslucent() ? GL_RGBA : GL_RGB, GL_UNSIGNED_BYTE);
+                    for (int s=0; s<image->s(); ++s)
+                        for (int t=0; t<image->t(); ++t)
+                            for (int r=0; r<image->r(); ++r)
+                                newImage->setColor(image->getColor(s,t,r), s,t,r);
+                    image = newImage;
+                }
             }
 
             mCache->addEntryToObjectCache(normalized, image);
@@ -136,6 +158,11 @@ namespace Resource
     osg::Image *ImageManager::getWarningImage()
     {
         return mWarningImage;
+    }
+
+    void ImageManager::reportStats(unsigned int frameNumber, osg::Stats *stats) const
+    {
+        stats->setAttribute(frameNumber, "Image", mCache->getCacheSize());
     }
 
 }

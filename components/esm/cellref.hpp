@@ -1,6 +1,7 @@
 #ifndef OPENMW_ESM_CELLREF_H
 #define OPENMW_ESM_CELLREF_H
 
+#include <limits>
 #include <string>
 
 #include "defs.hpp"
@@ -10,6 +11,7 @@ namespace ESM
     class ESMWriter;
     class ESMReader;
 
+    const int UnbreakableLock = std::numeric_limits<int>::max();
 
     struct RefNum
     {
@@ -69,6 +71,7 @@ namespace ESM
                 int mChargeInt;     // Used by everything except lights
                 float mChargeFloat; // Used only by lights
             };
+            float mChargeIntRemainder; // Stores amount of charge not subtracted from mChargeInt
 
             // Remaining enchantment charge. This could be -1 if the charge was not touched yet (i.e. full).
             float mEnchantmentCharge;
@@ -111,8 +114,20 @@ namespace ESM
             void blank();
     };
 
-    bool operator== (const RefNum& left, const RefNum& right);
-    bool operator< (const RefNum& left, const RefNum& right);
+    inline bool operator== (const RefNum& left, const RefNum& right)
+    {
+        return left.mIndex==right.mIndex && left.mContentFile==right.mContentFile;
+    }
+
+    inline bool operator< (const RefNum& left, const RefNum& right)
+    {
+        if (left.mIndex<right.mIndex)
+            return true;
+        if (left.mIndex>right.mIndex)
+            return false;
+        return left.mContentFile<right.mContentFile;
+    }
+
 }
 
 #endif

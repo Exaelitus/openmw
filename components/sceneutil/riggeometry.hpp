@@ -6,17 +6,15 @@
 
 namespace SceneUtil
 {
-
     class Skeleton;
     class Bone;
 
     /// @brief Mesh skinning implementation.
     /// @note A RigGeometry may be attached directly to a Skeleton, or somewhere below a Skeleton.
     /// Note though that the RigGeometry ignores any transforms below the Skeleton, so the attachment point is not that important.
-    /// @note To avoid race conditions, the rig geometry needs to be double buffered. This can be done
-    /// using a FrameSwitch node that has two RigGeometry children. In the future we may want to consider implementing
-    /// the double buffering inside RigGeometry.
-    class RigGeometry : public osg::Geometry
+    /// @note The internal Geometry used for rendering is double buffered, this allows updates to be done in a thread safe way while
+    /// not compromising rendering performance. This is crucial when using osg's default threading model of DrawThreadPerContext.
+    class RigGeometry : public osg::Drawable
     {
     public:
         RigGeometry();
@@ -24,17 +22,20 @@ namespace SceneUtil
 
         META_Object(SceneUtil, RigGeometry)
 
+        // Currently empty as this is difficult to implement. Technically we would need to compile both internal geometries in separate frames but this method is only called once. Alternatively we could compile just the static parts of the model.
+        virtual void compileGLObjects(osg::RenderInfo& renderInfo) const {}
+
         struct BoneInfluence
         {
             osg::Matrixf mInvBindMatrix;
             osg::BoundingSpheref mBoundSphere;
             // <vertex index, weight>
-            std::map<unsigned short, float> mWeights;
+            std::vector<std::pair<unsigned short, float>> mWeights;
         };
 
         struct InfluenceMap : public osg::Referenced
         {
-            std::map<std::string, BoneInfluence> mMap;
+            std::vector<std::pair<std::string, BoneInfluence>> mData;
         };
 
         void setInfluenceMap(osg::ref_ptr<InfluenceMap> influenceMap);
@@ -43,25 +44,42 @@ namespace SceneUtil
         /// @note The source geometry will not be modified.
         void setSourceGeometry(osg::ref_ptr<osg::Geometry> sourceGeom);
 
-        osg::ref_ptr<osg::Geometry> getSourceGeometry();
+        osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
 
-        // Called automatically by our CullCallback
-        void update(osg::NodeVisitor* nv);
+        virtual void accept(osg::NodeVisitor &nv);
+        virtual bool supports(const osg::PrimitiveFunctor&) const { return true; }
+        virtual void accept(osg::PrimitiveFunctor&) const;
 
-        // Called automatically by our UpdateCallback
-        void updateBounds(osg::NodeVisitor* nv);
+        struct CopyBoundingBoxCallback : osg::Drawable::ComputeBoundingBoxCallback
+        {
+            osg::BoundingBox boundingBox;
+
+            virtual osg::BoundingBox computeBound(const osg::Drawable&) const override { return boundingBox; }
+        };
+
+        struct CopyBoundingSphereCallback : osg::Node::ComputeBoundingSphereCallback
+        {
+            osg::BoundingSphere boundingSphere;
+
+            virtual osg::BoundingSphere computeBound(const osg::Node&) const override { return boundingSphere; }
+        };
 
     private:
+        void cull(osg::NodeVisitor* nv);
+        void updateBounds(osg::NodeVisitor* nv);
+
+        osg::ref_ptr<osg::Geometry> mGeometry[2];
+        osg::Geometry* getGeometry(unsigned int frame) const;
+
         osg::ref_ptr<osg::Geometry> mSourceGeometry;
-        osg::ref_ptr<osg::Vec4Array> mSourceTangents;
+        osg::ref_ptr<const osg::Vec4Array> mSourceTangents;
         Skeleton* mSkeleton;
 
-        osg::NodePath mSkelToGeomPath;
-        osg::Matrixf mGeomToSkelMatrix;
+        osg::ref_ptr<osg::RefMatrix> mGeomToSkelMatrix;
 
         osg::ref_ptr<InfluenceMap> mInfluenceMap;
 
-        typedef std::pair<Bone*, osg::Matrixf> BoneBindMatrixPair;
+        typedef std::pair<std::string, osg::Matrixf> BoneBindMatrixPair;
 
         typedef std::pair<BoneBindMatrixPair, float> BoneWeight;
 
@@ -69,18 +87,25 @@ namespace SceneUtil
 
         typedef std::map<std::vector<BoneWeight>, VertexList> Bone2VertexMap;
 
-        Bone2VertexMap mBone2VertexMap;
+        struct Bone2VertexVector : public osg::Referenced
+        {
+            std::vector<std::pair<std::vector<BoneWeight>, VertexList>> mData;
+        };
+        osg::ref_ptr<Bone2VertexVector> mBone2VertexVector;
 
-        typedef std::map<Bone*, osg::BoundingSpheref> BoneSphereMap;
-
-        BoneSphereMap mBoneSphereMap;
+        struct BoneSphereVector : public osg::Referenced
+        {
+            std::vector<std::pair<std::string, osg::BoundingSpheref>> mData;
+        };
+        osg::ref_ptr<BoneSphereVector> mBoneSphereVector;
+        std::vector<Bone*> mBoneNodesVector;
 
         unsigned int mLastFrameNumber;
         bool mBoundsFirstFrame;
 
         bool initFromParentSkeleton(osg::NodeVisitor* nv);
 
-        void updateGeomToSkelMatrix(osg::NodeVisitor* nv);
+        void updateGeomToSkelMatrix(const osg::NodePath& nodePath);
     };
 
 }

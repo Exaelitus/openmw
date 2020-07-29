@@ -1,6 +1,8 @@
 #ifndef MWGUI_LOADINGSCREEN_H
 #define MWGUI_LOADINGSCREEN_H
 
+#include <memory>
+
 #include <osg/Timer>
 #include <osg/ref_ptr>
 
@@ -18,9 +20,9 @@ namespace osg
     class Texture2D;
 }
 
-namespace VFS
+namespace Resource
 {
-    class Manager;
+    class ResourceSystem;
 }
 
 namespace MWGui
@@ -30,12 +32,12 @@ namespace MWGui
     class LoadingScreen : public WindowBase, public Loading::Listener
     {
     public:
-        LoadingScreen(const VFS::Manager* vfs, osgViewer::Viewer* viewer);
+        LoadingScreen(Resource::ResourceSystem* resourceSystem, osgViewer::Viewer* viewer);
         virtual ~LoadingScreen();
 
         /// Overridden from Loading::Listener, see the Loading::Listener documentation for usage details
-        virtual void setLabel (const std::string& label, bool important);
-        virtual void loadingOn();
+        virtual void setLabel (const std::string& label, bool important, bool center);
+        virtual void loadingOn(bool visible=true);
         virtual void loadingOff();
         virtual void setProgressRange (size_t range);
         virtual void setProgress (size_t value);
@@ -43,11 +45,15 @@ namespace MWGui
 
         virtual void setVisible(bool visible);
 
+        double getTargetFrameRate() const;
+
     private:
         void findSplashScreens();
         bool needToDrawLoadingScreen();
 
-        const VFS::Manager* mVFS;
+        void setupCopyFramebufferToTextureCallback();
+
+        Resource::ResourceSystem* mResourceSystem;
         osg::ref_ptr<osgViewer::Viewer> mViewer;
 
         double mTargetFrameRate;
@@ -59,20 +65,26 @@ namespace MWGui
 
         bool mImportantLabel;
 
+        bool mVisible;
+        int mNestedLoadingCount;
+
         size_t mProgress;
+
+        bool mShowWallpaper;
+        float mOldIcoMin = 0.f;
+        unsigned int mOldIcoMax = 0;
 
         MyGUI::Widget* mLoadingBox;
 
         MyGUI::TextBox* mLoadingText;
         MyGUI::ScrollBar* mProgressBar;
         BackgroundImage* mBackgroundImage;
+        BackgroundImage* mSceneImage;
 
         std::vector<std::string> mSplashScreens;
 
-        // TODO: add releaseGLObjects() for mTexture
-
         osg::ref_ptr<osg::Texture2D> mTexture;
-        std::auto_ptr<MyGUI::ITexture> mGuiTexture;
+        std::unique_ptr<MyGUI::ITexture> mGuiTexture;
 
         void changeWallpaper();
 

@@ -31,10 +31,12 @@
 
 #include <components/resource/resourcesystem.hpp>
 
+#include <components/files/multidircollection.hpp>
 #include <components/to_utf8/to_utf8.hpp>
 
 #include "../doc/stage.hpp"
 
+#include "actoradapter.hpp"
 #include "idcollection.hpp"
 #include "nestedidcollection.hpp"
 #include "universalid.hpp"
@@ -46,6 +48,7 @@
 #include "infocollection.hpp"
 #include "nestedinfocollection.hpp"
 #include "pathgrid.hpp"
+#include "resourcesmanager.hpp"
 #include "metadata.hpp"
 #ifndef Q_MOC_RUN
 #include "subcellcollection.hpp"
@@ -108,8 +111,7 @@ namespace CSMWorld
             RefCollection mRefs;
             IdCollection<ESM::Filter> mFilters;
             Collection<MetaData> mMetaData;
-            const ResourcesManager& mResourcesManager;
-            const Fallback::Map* mFallbackMap;
+            std::unique_ptr<ActorAdapter> mActorAdapter;
             std::vector<QAbstractItemModel *> mModels;
             std::map<UniversalId::Type, QAbstractItemModel *> mModelIndex;
             ESM::ESMReader *mReader;
@@ -119,9 +121,16 @@ namespace CSMWorld
             std::map<std::string, std::map<ESM::RefNum, std::string> > mRefLoadCache;
             int mReaderIndex;
 
-            boost::shared_ptr<Resource::ResourceSystem> mResourceSystem;
+            bool mFsStrict;
+            Files::PathContainer mDataPaths;
+            std::vector<std::string> mArchives;
+            std::unique_ptr<VFS::Manager> mVFS;
+            ResourcesManager mResourcesManager;
+            std::shared_ptr<Resource::ResourceSystem> mResourceSystem;
 
-            std::vector<boost::shared_ptr<ESM::ESMReader> > mReaders;
+            std::vector<std::shared_ptr<ESM::ESMReader> > mReaders;
+
+            std::map<std::string, int> mContentFileNames;
 
             // not implemented
             Data (const Data&);
@@ -136,19 +145,20 @@ namespace CSMWorld
 
             static int count (RecordBase::State state, const CollectionBase& collection);
 
+            void loadFallbackEntries();
+
         public:
 
-            Data (ToUTF8::FromType encoding, const ResourcesManager& resourcesManager, const Fallback::Map* fallback);
+            Data (ToUTF8::FromType encoding, bool fsStrict, const Files::PathContainer& dataPaths,
+                const std::vector<std::string>& archives, const boost::filesystem::path& resDir);
 
             virtual ~Data();
 
             const VFS::Manager* getVFS() const;
 
-            const Fallback::Map* getFallbackMap() const;
+            std::shared_ptr<Resource::ResourceSystem> getResourceSystem();
 
-            boost::shared_ptr<Resource::ResourceSystem> getResourceSystem();
-
-            boost::shared_ptr<const Resource::ResourceSystem> getResourceSystem() const;
+            std::shared_ptr<const Resource::ResourceSystem> getResourceSystem() const;
 
             const IdCollection<ESM::Global>& getGlobals() const;
 
@@ -275,6 +285,10 @@ namespace CSMWorld
             /// \note The returned table may either be the model for the ID itself or the model that
             /// contains the record specified by the ID.
 
+            const ActorAdapter* getActorAdapter() const;
+
+            ActorAdapter* getActorAdapter();
+
             void merge();
             ///< Merge modified into base.
 
@@ -302,7 +316,11 @@ namespace CSMWorld
 
             void idListChanged();
 
+            void assetTablesChanged();
+
         private slots:
+
+            void assetsChanged();
 
             void dataChanged (const QModelIndex& topLeft, const QModelIndex& bottomRight);
 

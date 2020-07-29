@@ -1,6 +1,8 @@
 #include "waitdialog.hpp"
 
 #include <MyGUI_ProgressBar.h>
+#include <MyGUI_InputManager.h>
+#include <MyGUI_ScrollBar.h>
 
 #include <components/misc/rng.hpp>
 
@@ -23,8 +25,6 @@
 
 #include "../mwstate/charactermanager.hpp"
 
-#include "widgets.hpp"
-
 namespace MWGui
 {
 
@@ -35,7 +35,7 @@ namespace MWGui
         getWidget(mProgressText, "ProgressText");
     }
 
-    void WaitDialogProgressBar::open()
+    void WaitDialogProgressBar::onOpen()
     {
         center();
     }
@@ -72,36 +72,74 @@ namespace MWGui
         mWaitButton->eventMouseButtonClick += MyGUI::newDelegate(this, &WaitDialog::onWaitButtonClicked);
         mHourSlider->eventScrollChangePosition += MyGUI::newDelegate(this, &WaitDialog::onHourSliderChangedPosition);
 
+        mCancelButton->eventKeyButtonPressed += MyGUI::newDelegate(this, &WaitDialog::onKeyButtonPressed);
+        mWaitButton->eventKeyButtonPressed += MyGUI::newDelegate(this, &WaitDialog::onKeyButtonPressed);
+        mUntilHealedButton->eventKeyButtonPressed += MyGUI::newDelegate(this, &WaitDialog::onKeyButtonPressed);
+
         mTimeAdvancer.eventProgressChanged += MyGUI::newDelegate(this, &WaitDialog::onWaitingProgressChanged);
         mTimeAdvancer.eventInterrupted += MyGUI::newDelegate(this, &WaitDialog::onWaitingInterrupted);
         mTimeAdvancer.eventFinished += MyGUI::newDelegate(this, &WaitDialog::onWaitingFinished);
-
-        mProgressBar.setVisible (false);
     }
 
-    void WaitDialog::exit()
+    void WaitDialog::setPtr(const MWWorld::Ptr &ptr)
     {
-        if(!mProgressBar.isVisible()) //Only exit if not currently waiting
-            MWBase::Environment::get().getWindowManager()->popGuiMode();
+        setCanRest(!ptr.isEmpty() || MWBase::Environment::get().getWorld ()->canRest () == MWBase::World::Rest_Allowed);
+
+        if (ptr.isEmpty() && MWBase::Environment::get().getWorld ()->canRest() == MWBase::World::Rest_PlayerIsInAir)
+        {
+            // Resting in air is not allowed unless you're using a bed
+            MWBase::Environment::get().getWindowManager()->messageBox ("#{sNotifyMessage1}");
+            MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Rest);
+        }
+            
+        if (mUntilHealedButton->getVisible())
+            MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mUntilHealedButton);
+        else
+            MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mWaitButton);
     }
 
-    void WaitDialog::open()
+    bool WaitDialog::exit()
     {
+        return (!mTimeAdvancer.isRunning()); //Only exit if not currently waiting
+    }
+
+    void WaitDialog::clear()
+    {
+        mSleeping = false;
+        mTimeAdvancer.stop();
+    }
+
+    void WaitDialog::onOpen()
+    {
+        if (mTimeAdvancer.isRunning())
+        {
+            mProgressBar.setVisible(true);
+            setVisible(false);
+            return;
+        }
+        else
+        {
+            mProgressBar.setVisible(false);
+        }
+
         if (!MWBase::Environment::get().getWindowManager ()->getRestEnabled ())
         {
             MWBase::Environment::get().getWindowManager()->popGuiMode ();
         }
 
-        int canRest = MWBase::Environment::get().getWorld ()->canRest ();
+        MWBase::World::RestPermitted canRest = MWBase::Environment::get().getWorld ()->canRest ();
 
-        if (canRest == 2)
+        if (canRest == MWBase::World::Rest_EnemiesAreNearby)
         {
-            // resting underwater or mid-air not allowed
+            MWBase::Environment::get().getWindowManager()->messageBox("#{sNotifyMessage2}");
+            MWBase::Environment::get().getWindowManager()->popGuiMode ();
+        }
+        else if (canRest == MWBase::World::Rest_PlayerIsUnderwater)
+        {
+            // resting underwater not allowed
             MWBase::Environment::get().getWindowManager()->messageBox ("#{sNotifyMessage1}");
             MWBase::Environment::get().getWindowManager()->popGuiMode ();
         }
-
-        setCanRest(canRest == 0);
 
         onHourSliderChangedPosition(mHourSlider, 0);
         mHourSlider->setScrollPosition (0);
@@ -112,11 +150,10 @@ namespace MWGui
         if (hour >= 13) hour -= 12;
         if (hour == 0) hour = 12;
 
-        std::string dateTimeText =
-                MyGUI::utility::toString(MWBase::Environment::get().getWorld ()->getDay ()) + " "
-                + month + " (#{sDay} " + MyGUI::utility::toString(MWBase::Environment::get().getWorld ()->getTimeStamp ().getDay())
-                + ") " + MyGUI::utility::toString(hour) + " " + (pm ? "#{sSaveMenuHelp05}" : "#{sSaveMenuHelp04}");
-
+        ESM::EpochTimeStamp currentDate = MWBase::Environment::get().getWorld()->getEpochTimeStamp();
+        int daysPassed = MWBase::Environment::get().getWorld()->getTimeStamp().getDay();
+        std::string formattedHour = pm ? "#{sSaveMenuHelp05}" : "#{sSaveMenuHelp04}";
+        std::string dateTimeText = Misc::StringUtils::format("%i %s (#{sDay} %i) %i %s", currentDate.mDay, month, daysPassed, hour, formattedHour);
         mDateTimeText->setCaptionWithReplacing (dateTimeText);
     }
 
@@ -134,7 +171,7 @@ namespace MWGui
 
     void WaitDialog::startWaiting(int hoursToWait)
     {
-        if(Settings::Manager::getBool("autosave","Saves") && mSleeping) //autosaves when enabled and sleeping
+        if(Settings::Manager::getBool("autosave","Saves")) //autosaves when enabled
             MWBase::Environment::get().getStateManager()->quickSave("Autosave");
 
         MWBase::World* world = MWBase::Environment::get().getWorld();
@@ -157,10 +194,10 @@ namespace MWGui
                 {
                     // figure out if player will be woken while sleeping
                     int x = Misc::Rng::rollDice(hoursToWait);
-                    float fSleepRandMod = world->getStore().get<ESM::GameSetting>().find("fSleepRandMod")->getFloat();
+                    float fSleepRandMod = world->getStore().get<ESM::GameSetting>().find("fSleepRandMod")->mValue.getFloat();
                     if (x < fSleepRandMod * hoursToWait)
                     {
-                        float fSleepRestMod = world->getStore().get<ESM::GameSetting>().find("fSleepRestMod")->getFloat();
+                        float fSleepRestMod = world->getStore().get<ESM::GameSetting>().find("fSleepRestMod")->mValue.getFloat();
                         int interruptAtHoursRemaining = int(fSleepRestMod * hoursToWait);
                         if (interruptAtHoursRemaining != 0)
                         {
@@ -177,20 +214,36 @@ namespace MWGui
 
     void WaitDialog::onCancelButtonClicked(MyGUI::Widget* sender)
     {
-        exit();
+        MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Rest);
     }
 
     void WaitDialog::onHourSliderChangedPosition(MyGUI::ScrollBar* sender, size_t position)
     {
         mHourText->setCaptionWithReplacing (MyGUI::utility::toString(position+1) + " #{sRestMenu2}");
         mManualHours = position+1;
+        MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mWaitButton);
+    }
+
+    void WaitDialog::onKeyButtonPressed(MyGUI::Widget *sender, MyGUI::KeyCode key, MyGUI::Char character)
+    {
+        if (key == MyGUI::KeyCode::ArrowUp)
+            mHourSlider->setScrollPosition(std::min(mHourSlider->getScrollPosition()+1, mHourSlider->getScrollRange()-1));
+        else if (key == MyGUI::KeyCode::ArrowDown)
+            mHourSlider->setScrollPosition(std::max(static_cast<int>(mHourSlider->getScrollPosition())-1, 0));
+        else
+            return;
+        onHourSliderChangedPosition(mHourSlider, mHourSlider->getScrollPosition());
     }
 
     void WaitDialog::onWaitingProgressChanged(int cur, int total)
     {
         mProgressBar.setProgress(cur, total);
+        MWBase::Environment::get().getMechanicsManager()->rest(1, mSleeping);
         MWBase::Environment::get().getWorld()->advanceTime(1);
-        MWBase::Environment::get().getMechanicsManager()->rest(mSleeping);
+
+        MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        if (player.getClass().getCreatureStats(player).isDead())
+            stopWaiting();
     }
 
     void WaitDialog::onWaitingInterrupted()
@@ -210,7 +263,7 @@ namespace MWGui
         // trigger levelup if possible
         const MWWorld::Store<ESM::GameSetting> &gmst =
             MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
-        if (mSleeping && pcstats.getLevelProgress () >= gmst.find("iLevelUpTotal")->getInt())
+        if (mSleeping && pcstats.getLevelProgress () >= gmst.find("iLevelUpTotal")->mValue.getInteger())
         {
             MWBase::Environment::get().getWindowManager()->pushGuiMode (GM_Levelup);
         }
@@ -234,7 +287,7 @@ namespace MWGui
         mSleeping = canRest;
 
         Gui::Box* box = dynamic_cast<Gui::Box*>(mMainWidget);
-        if (box == NULL)
+        if (box == nullptr)
             throw std::runtime_error("main widget must be a box");
         box->notifyChildrenSizeChanged();
         center();
@@ -261,7 +314,6 @@ namespace MWGui
         MWBase::Environment::get().getWindowManager()->fadeScreenIn(0.2f);
         mProgressBar.setVisible (false);
         MWBase::Environment::get().getWindowManager()->removeGuiMode (GM_Rest);
-        MWBase::Environment::get().getWindowManager()->removeGuiMode (GM_RestBed);
         mTimeAdvancer.stop();
     }
 
@@ -269,8 +321,10 @@ namespace MWGui
     void WaitDialog::wakeUp ()
     {
         mSleeping = false;
-        mTimeAdvancer.stop();
-        stopWaiting();
+        if (mInterruptAt != -1)
+            onWaitingInterrupted();
+        else
+            stopWaiting();
     }
 
 }

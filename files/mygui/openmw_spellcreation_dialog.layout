@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <MyGUI type="Layout">
-    <Widget type="Window" skin="MW_Dialog" layer="Windows" position="0 0 560 394" name="_Main">
+    <Widget type="Window" skin="MW_Dialog" layer="Windows" position="0 0 560 394" align="Center" name="_Main">
 
         <Widget type="HBox" position="12 12 250 30">
             <Widget type="AutoSizedTextBox" skin="NormalText">
@@ -68,9 +68,7 @@
         <Widget type="HBox" position="0 336 558 60">
             <Property key="Padding" value="16"/>
 
-            <Widget type="Widget" position="0 0 0 0">
-                <UserString key="HStretch" value="true"/>
-            </Widget>
+            <Widget type="Spacer"/>
 
             <Widget type="AutoSizedTextBox" skin="NormalText">
                 <Property key="Caption" value="#{sBarterDialog7}"/>

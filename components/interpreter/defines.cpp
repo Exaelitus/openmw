@@ -3,8 +3,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <iostream>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/stringops.hpp>
 
 namespace Interpreter{
@@ -138,7 +138,7 @@ namespace Interpreter{
                             retval << context.getNPCRace();
                         }
                         else if((found = check(temp, "name", &i, &start))){
-                            retval << context.getNPCName();
+                            retval << context.getActorName();
                         }
                     }
                     else { // In messagebox or book, not dialogue
@@ -172,7 +172,7 @@ namespace Interpreter{
 
                         for(unsigned int j = 0; j < globals.size(); j++){
                             if(globals[j].length() > temp.length()){ // Just in case there's a global with a huuuge name
-                                std::string temp = text.substr(i+1, globals[j].length());
+                                temp = text.substr(i+1, globals[j].length());
                                 transform(temp.begin(), temp.end(), temp.begin(), ::tolower);
                             }
 
@@ -191,8 +191,8 @@ namespace Interpreter{
                 }
                 catch (std::exception& e)
                 {
-                    std::cerr << "Failed to replace escape character, with the following error: " << e.what() << std::endl;
-                    std::cerr << "Full text below: " << std::endl << text << std::endl;
+                    Log(Debug::Error) << "Error: Failed to replace escape character, with the following error: " << e.what();
+                    Log(Debug::Error) << "Full text below:\n" << text;
                 }
 
                 // Not found, or error

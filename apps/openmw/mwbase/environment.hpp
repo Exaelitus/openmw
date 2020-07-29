@@ -1,6 +1,11 @@
 #ifndef GAME_BASE_ENVIRONMENT_H
 #define GAME_BASE_ENVIRONMENT_H
 
+namespace osg
+{
+    class Stats;
+}
+
 namespace MWBase
 {
     class World;
@@ -33,6 +38,7 @@ namespace MWBase
             InputManager *mInputManager;
             StateManager *mStateManager;
             float mFrameDuration;
+            float mFrameRateLimit;
 
             Environment (const Environment&);
             ///< not implemented
@@ -67,6 +73,10 @@ namespace MWBase
             void setFrameDuration (float duration);
             ///< Set length of current frame in seconds.
 
+            void setFrameRateLimit(float frameRateLimit);
+            float getFrameRateLimit() const;
+            void limitFrameRate(double dt) const;
+
             World *getWorld() const;
 
             SoundManager *getSoundManager() const;
@@ -92,6 +102,8 @@ namespace MWBase
 
             static const Environment& get();
             ///< Return instance of this class.
+
+            void reportStats(unsigned int frameNumber, osg::Stats& stats) const;
     };
 }
 

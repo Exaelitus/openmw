@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <set>
 
 #include "defs.hpp"
 
@@ -28,11 +29,16 @@ namespace ESM
             float mMagnitude;
         };
 
-        typedef std::map<std::string, std::map<int, float> > TContainer;
+        struct SpellParams
+        {
+            std::map<int, float> mEffectRands;
+            std::set<int> mPurgedEffects;
+        };
+        typedef std::map<std::string, SpellParams> TContainer;
         TContainer mSpells;
 
+        // FIXME: obsolete, used only for old saves
         std::map<std::string, std::vector<PermanentSpellEffectInfo> > mPermanentSpellEffects;
-
         std::map<std::string, CorprusStats> mCorprusSpells;
 
         std::map<std::string, TimeStamp> mUsedPowers;

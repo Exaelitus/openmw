@@ -1,7 +1,6 @@
 #include "alchemy.hpp"
 
 #include <cassert>
-#include <cstdlib>
 #include <cmath>
 
 #include <algorithm>
@@ -15,7 +14,6 @@
 #include <components/esm/loadgmst.hpp>
 #include <components/esm/loadmgef.hpp>
 
-
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
@@ -27,10 +25,10 @@
 
 #include "magiceffects.hpp"
 #include "creaturestats.hpp"
-#include "npcstats.hpp"
 
 MWMechanics::Alchemy::Alchemy()
     : mValue(0)
+    , mPotionName("")
 {
 }
 
@@ -74,7 +72,7 @@ void MWMechanics::Alchemy::applyTools (int flags, float& value) const
     bool duration = !(flags & ESM::MagicEffect::NoDuration);
     bool negative = (flags & ESM::MagicEffect::Harmful) != 0;
 
-    int tool = negative ? ESM::Apparatus::Retort : ESM::Apparatus::Albemic;
+    int tool = negative ? ESM::Apparatus::Alembic : ESM::Apparatus::Retort;
 
     int setup = 0;
 
@@ -141,11 +139,11 @@ void MWMechanics::Alchemy::updateEffects()
     float x = getAlchemyFactor();
 
     x *= mTools[ESM::Apparatus::MortarPestle].get<ESM::Apparatus>()->mBase->mData.mQuality;
-    x *= MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find ("fPotionStrengthMult")->getFloat();
+    x *= MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find ("fPotionStrengthMult")->mValue.getFloat();
 
     // value
     mValue = static_cast<int> (
-        x * MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find ("iAlchemyMod")->getFloat());
+        x * MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find ("iAlchemyMod")->mValue.getFloat());
 
     // build quantified effect list
     for (std::set<EffectKey>::const_iterator iter (effects.begin()); iter!=effects.end(); ++iter)
@@ -155,27 +153,26 @@ void MWMechanics::Alchemy::updateEffects()
 
         if (magicEffect->mData.mBaseCost<=0)
         {
-            std::ostringstream os;
-            os << "invalid base cost for magic effect " << iter->mId;
-            throw std::runtime_error (os.str());
+            const std::string os = "invalid base cost for magic effect " + std::to_string(iter->mId);
+            throw std::runtime_error (os);
         }
 
         float fPotionT1MagMul =
-            MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find ("fPotionT1MagMult")->getFloat();
+            MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find ("fPotionT1MagMult")->mValue.getFloat();
 
         if (fPotionT1MagMul<=0)
             throw std::runtime_error ("invalid gmst: fPotionT1MagMul");
 
         float fPotionT1DurMult =
-            MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find ("fPotionT1DurMult")->getFloat();
+            MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find ("fPotionT1DurMult")->mValue.getFloat();
 
         if (fPotionT1DurMult<=0)
             throw std::runtime_error ("invalid gmst: fPotionT1DurMult");
 
-        float magnitude = magicEffect->mData.mFlags & ESM::MagicEffect::NoMagnitude ?
-            1 : (x / fPotionT1MagMul) / magicEffect->mData.mBaseCost;
-        float duration = magicEffect->mData.mFlags & ESM::MagicEffect::NoDuration ?
-            1 : (x / fPotionT1DurMult) / magicEffect->mData.mBaseCost;
+        float magnitude = (magicEffect->mData.mFlags & ESM::MagicEffect::NoMagnitude) ?
+            1.0f : (x / fPotionT1MagMul) / magicEffect->mData.mBaseCost;
+        float duration = (magicEffect->mData.mFlags & ESM::MagicEffect::NoDuration) ?
+            1.0f : (x / fPotionT1DurMult) / magicEffect->mData.mBaseCost;
 
         if (!(magicEffect->mData.mFlags & ESM::MagicEffect::NoMagnitude))
             applyTools (magicEffect->mData.mFlags, magnitude);
@@ -263,22 +260,16 @@ const ESM::Potion *MWMechanics::Alchemy::getRecord(const ESM::Potion& toFind) co
 
 void MWMechanics::Alchemy::removeIngredients()
 {
-    bool needsUpdate = false;
-
     for (TIngredientsContainer::iterator iter (mIngredients.begin()); iter!=mIngredients.end(); ++iter)
         if (!iter->isEmpty())
         {
             iter->getContainerStore()->remove(*iter, 1, mAlchemist);
 
             if (iter->getRefData().getCount()<1)
-            {
-                needsUpdate = true;
                 *iter = MWWorld::Ptr();
-            }
         }
 
-    if (needsUpdate)
-        updateEffects();
+    updateEffects();
 }
 
 void MWMechanics::Alchemy::addPotion (const std::string& name)
@@ -324,10 +315,9 @@ void MWMechanics::Alchemy::increaseSkill()
 float MWMechanics::Alchemy::getAlchemyFactor() const
 {
     const CreatureStats& creatureStats = mAlchemist.getClass().getCreatureStats (mAlchemist);
-    const NpcStats& npcStats = mAlchemist.getClass().getNpcStats (mAlchemist);
 
     return
-        (npcStats.getSkill (ESM::Skill::Alchemy).getModified() +
+        (mAlchemist.getClass().getSkill(mAlchemist, ESM::Skill::Alchemy) +
         0.1f * creatureStats.getAttribute (ESM::Attribute::Intelligence).getModified()
         + 0.1f * creatureStats.getAttribute (ESM::Attribute::Luck).getModified());
 }
@@ -341,6 +331,25 @@ int MWMechanics::Alchemy::countIngredients() const
             ++ingredients;
 
     return ingredients;
+}
+
+int MWMechanics::Alchemy::countPotionsToBrew() const
+{
+    Result readyStatus = getReadyStatus();
+    if (readyStatus != Result_Success)
+        return 0;
+
+    int toBrew = -1;
+
+    for (TIngredientsIterator iter (beginIngredients()); iter!=endIngredients(); ++iter)
+        if (!iter->isEmpty())
+        {
+            int count = iter->getRefData().getCount();
+            if ((count > 0 && count < toBrew) || toBrew < 0)
+                toBrew = count;
+        }
+
+    return toBrew;
 }
 
 void MWMechanics::Alchemy::setAlchemist (const MWWorld::Ptr& npc)
@@ -403,6 +412,12 @@ void MWMechanics::Alchemy::clear()
     mTools.clear();
     mIngredients.clear();
     mEffects.clear();
+    setPotionName("");
+}
+
+void MWMechanics::Alchemy::setPotionName(const std::string& name)
+{
+    mPotionName = name;
 }
 
 int MWMechanics::Alchemy::addIngredient (const MWWorld::Ptr& ingredient)
@@ -453,15 +468,16 @@ MWMechanics::Alchemy::TEffectsIterator MWMechanics::Alchemy::endEffects() const
 
 bool MWMechanics::Alchemy::knownEffect(unsigned int potionEffectIndex, const MWWorld::Ptr &npc)
 {
-    MWMechanics::NpcStats& npcStats = npc.getClass().getNpcStats(npc);
-    int alchemySkill = npcStats.getSkill (ESM::Skill::Alchemy).getBase();
+    float alchemySkill = npc.getClass().getSkill (npc, ESM::Skill::Alchemy);
     static const float fWortChanceValue =
-            MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find("fWortChanceValue")->getFloat();
+            MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find("fWortChanceValue")->mValue.getFloat();
     return (potionEffectIndex <= 1 && alchemySkill >= fWortChanceValue)
-            || (potionEffectIndex <= 3 && alchemySkill >= fWortChanceValue*2);
+            || (potionEffectIndex <= 3 && alchemySkill >= fWortChanceValue*2)
+            || (potionEffectIndex <= 5 && alchemySkill >= fWortChanceValue*3)
+            || (potionEffectIndex <= 7 && alchemySkill >= fWortChanceValue*4);
 }
 
-MWMechanics::Alchemy::Result MWMechanics::Alchemy::create (const std::string& name)
+MWMechanics::Alchemy::Result MWMechanics::Alchemy::getReadyStatus() const
 {
     if (mTools[ESM::Apparatus::MortarPestle].isEmpty())
         return Result_NoMortarAndPestle;
@@ -469,15 +485,43 @@ MWMechanics::Alchemy::Result MWMechanics::Alchemy::create (const std::string& na
     if (countIngredients()<2)
         return Result_LessThanTwoIngredients;
 
-    if (name.empty())
+    if (mPotionName.empty())
         return Result_NoName;
 
     if (listEffects().empty())
-    {
-        removeIngredients();
         return Result_NoEffects;
+
+    return Result_Success;
+}
+
+MWMechanics::Alchemy::Result MWMechanics::Alchemy::create (const std::string& name, int& count)
+{
+    setPotionName(name);
+    Result readyStatus = getReadyStatus();
+
+    if (readyStatus == Result_NoEffects)
+        removeIngredients();
+
+    if (readyStatus != Result_Success)
+        return readyStatus;
+
+    Result result = Result_RandomFailure;
+    int brewedCount = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        if (createSingle() == Result_Success)
+        {
+            result = Result_Success;
+            brewedCount++;
+        }
     }
 
+    count = brewedCount;
+    return result;
+}
+
+MWMechanics::Alchemy::Result MWMechanics::Alchemy::createSingle ()
+{
     if (beginEffects() == endEffects())
     {
         // all effects were nullified due to insufficient skill
@@ -491,7 +535,7 @@ MWMechanics::Alchemy::Result MWMechanics::Alchemy::create (const std::string& na
         return Result_RandomFailure;
     }
 
-    addPotion (name);
+    addPotion(mPotionName);
 
     removeIngredients();
 
@@ -508,5 +552,39 @@ std::string MWMechanics::Alchemy::suggestPotionName()
 
     int effectId = effects.begin()->mId;
     return MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find(
-                ESM::MagicEffect::effectIdToString(effectId))->getString();
+                ESM::MagicEffect::effectIdToString(effectId))->mValue.getString();
+}
+
+std::vector<std::string> MWMechanics::Alchemy::effectsDescription (const MWWorld::ConstPtr &ptr, const int alchemySkill)
+{
+    std::vector<std::string> effects;
+
+    const auto& item = ptr.get<ESM::Ingredient>()->mBase;
+    const auto& gmst = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
+    const static auto fWortChanceValue = gmst.find("fWortChanceValue")->mValue.getFloat();
+    const auto& data = item->mData;
+
+    for (auto i = 0; i < 4; ++i)
+    {
+        const auto effectID = data.mEffectID[i];
+        const auto skillID = data.mSkills[i];
+        const auto attributeID = data.mAttributes[i];
+
+        if (alchemySkill < fWortChanceValue * (i + 1))
+            break;
+
+        if (effectID != -1)
+        {
+            std::string effect = gmst.find(ESM::MagicEffect::effectIdToString(effectID))->mValue.getString();
+
+            if (skillID != -1)
+                effect += " " + gmst.find(ESM::Skill::sSkillNameIds[skillID])->mValue.getString();
+            else if (attributeID != -1)
+                effect += " " + gmst.find(ESM::Attribute::sGmstAttributeIds[attributeID])->mValue.getString();
+
+            effects.push_back(effect);
+
+        }
+    }
+    return effects;
 }

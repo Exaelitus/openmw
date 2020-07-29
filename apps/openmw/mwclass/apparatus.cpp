@@ -3,11 +3,9 @@
 #include <components/esm/loadappa.hpp>
 
 #include "../mwbase/environment.hpp"
-#include "../mwbase/world.hpp"
 #include "../mwbase/windowmanager.hpp"
 
 #include "../mwworld/ptr.hpp"
-#include "../mwworld/actiontake.hpp"
 #include "../mwworld/actionalchemy.hpp"
 #include "../mwworld/cellstore.hpp"
 #include "../mwphysics/physicssystem.hpp"
@@ -47,11 +45,12 @@ namespace MWClass
     std::string Apparatus::getName (const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::Apparatus> *ref = ptr.get<ESM::Apparatus>();
+        const std::string& name = ref->mBase->mName;
 
-        return ref->mBase->mName;
+        return !name.empty() ? name : ref->mBase->mId;
     }
 
-    boost::shared_ptr<MWWorld::Action> Apparatus::activate (const MWWorld::Ptr& ptr,
+    std::shared_ptr<MWWorld::Action> Apparatus::activate (const MWWorld::Ptr& ptr,
         const MWWorld::Ptr& actor) const
     {
         return defaultItemActivate(ptr, actor);
@@ -73,7 +72,7 @@ namespace MWClass
 
     void Apparatus::registerSelf()
     {
-        boost::shared_ptr<Class> instance (new Apparatus);
+        std::shared_ptr<Class> instance (new Apparatus);
 
         registerClass (typeid (ESM::Apparatus).name(), instance);
     }
@@ -95,24 +94,17 @@ namespace MWClass
         return ref->mBase->mIcon;
     }
 
-    bool Apparatus::hasToolTip (const MWWorld::ConstPtr& ptr) const
-    {
-        const MWWorld::LiveCellRef<ESM::Apparatus> *ref = ptr.get<ESM::Apparatus>();
-
-        return (ref->mBase->mName != "");
-    }
-
     MWGui::ToolTipInfo Apparatus::getToolTipInfo (const MWWorld::ConstPtr& ptr, int count) const
     {
         const MWWorld::LiveCellRef<ESM::Apparatus> *ref = ptr.get<ESM::Apparatus>();
 
         MWGui::ToolTipInfo info;
-        info.caption = ref->mBase->mName + MWGui::ToolTips::getCountString(count);
+        info.caption = MyGUI::TextIterator::toTagsString(getName(ptr)) + MWGui::ToolTips::getCountString(count);
         info.icon = ref->mBase->mIcon;
 
         std::string text;
         text += "\n#{sQuality}: " + MWGui::ToolTips::toString(ref->mBase->mData.mQuality);
-        text += "\n#{sWeight}: " + MWGui::ToolTips::toString(ref->mBase->mData.mWeight);
+        text += MWGui::ToolTips::getWeightString(ref->mBase->mData.mWeight, "#{sWeight}");
         text += MWGui::ToolTips::getValueString(ref->mBase->mData.mValue, "#{sValue}");
 
         if (MWBase::Environment::get().getWindowManager()->getFullHelp()) {
@@ -124,10 +116,9 @@ namespace MWClass
         return info;
     }
 
-
-    boost::shared_ptr<MWWorld::Action> Apparatus::use (const MWWorld::Ptr& ptr) const
+    std::shared_ptr<MWWorld::Action> Apparatus::use (const MWWorld::Ptr& ptr, bool force) const
     {
-        return boost::shared_ptr<MWWorld::Action>(new MWWorld::ActionAlchemy());
+        return std::shared_ptr<MWWorld::Action>(new MWWorld::ActionAlchemy(force));
     }
 
     MWWorld::Ptr Apparatus::copyToCellImpl(const MWWorld::ConstPtr &ptr, MWWorld::CellStore &cell) const

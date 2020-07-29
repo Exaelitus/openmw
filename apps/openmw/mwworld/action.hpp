@@ -23,16 +23,21 @@ namespace MWWorld
 
         protected:
 
-            const Ptr& getTarget() const;
+            void setTarget(const Ptr&);
 
         public:
+
+            const Ptr& getTarget() const;
 
             Action (bool keepSound = false, const Ptr& target = Ptr());
             ///< \param keepSound Keep playing the sound even if the object the sound is played on is removed.
 
             virtual ~Action();
 
-            void execute (const Ptr& actor);
+            virtual bool isNullAction() { return false; }
+            ///< Is running this action a no-op? (default false)
+
+            void execute (const Ptr& actor, bool noSound = false);
 
             void setSound (const std::string& id);
             void setSoundOffset(float offset);

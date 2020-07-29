@@ -69,6 +69,9 @@ CSVWorld::TableSubView::TableSubView (const CSMWorld::UniversalId& id, CSMDoc::D
         connect (this, SIGNAL(cloneRequest(const std::string&, const CSMWorld::UniversalId::Type)),
                 mBottom, SLOT(cloneRequest(const std::string&, const CSMWorld::UniversalId::Type)));
 
+        connect (mTable, SIGNAL(touchRequest(const std::vector<CSMWorld::UniversalId>&)),
+            mBottom, SLOT(touchRequest(const std::vector<CSMWorld::UniversalId>&)));
+
         connect (mTable, SIGNAL(extendedDeleteConfigRequest(const std::vector<std::string> &)),
             mBottom, SLOT(extendedDeleteConfigRequest(const std::vector<std::string> &)));
         connect (mTable, SIGNAL(extendedRevertConfigRequest(const std::vector<std::string> &)),
@@ -78,8 +81,8 @@ CSVWorld::TableSubView::TableSubView (const CSMWorld::UniversalId& id, CSMDoc::D
         mTable, SLOT (requestFocus (const std::string&)));
 
     connect (mFilterBox,
-        SIGNAL (recordFilterChanged (boost::shared_ptr<CSMFilter::Node>)),
-        mTable, SLOT (recordFilterChanged (boost::shared_ptr<CSMFilter::Node>)));
+        SIGNAL (recordFilterChanged (std::shared_ptr<CSMFilter::Node>)),
+        mTable, SLOT (recordFilterChanged (std::shared_ptr<CSMFilter::Node>)));
 
     connect(mFilterBox, SIGNAL(recordDropped(std::vector<CSMWorld::UniversalId>&, Qt::DropAction)),
         this, SLOT(createFilterRequest(std::vector<CSMWorld::UniversalId>&, Qt::DropAction)));
@@ -148,17 +151,22 @@ bool CSVWorld::TableSubView::eventFilter (QObject* object, QEvent* event)
     {
         if (QDropEvent* drop = dynamic_cast<QDropEvent*>(event))
         {
-            const CSMWorld::TableMimeData* data = dynamic_cast<const CSMWorld::TableMimeData*>(drop->mimeData());
-            if (!data) // May happen when non-records (e.g. plain text) are dragged and dropped
+            const CSMWorld::TableMimeData* tableMimeData = dynamic_cast<const CSMWorld::TableMimeData*>(drop->mimeData());
+            if (!tableMimeData) // May happen when non-records (e.g. plain text) are dragged and dropped
                 return false;
 
-            bool handled = data->holdsType(CSMWorld::UniversalId::Type_Filter);
+            bool handled = tableMimeData->holdsType(CSMWorld::UniversalId::Type_Filter);
             if (handled)
             {
-                mFilterBox->setRecordFilter(data->returnMatching(CSMWorld::UniversalId::Type_Filter).getId());
+                mFilterBox->setRecordFilter(tableMimeData->returnMatching(CSMWorld::UniversalId::Type_Filter).getId());
             }
             return handled;
         }
     }
     return false;
+}
+
+void CSVWorld::TableSubView::requestFocus (const std::string& id)
+{
+    mTable->requestFocus(id);
 }

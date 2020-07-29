@@ -1,15 +1,16 @@
 #include "actor.hpp"
 
-#include <BulletCollision/CollisionShapes/btCylinderShape.h>
+#include <BulletCollision/CollisionShapes/btCapsuleShape.h>
 #include <BulletCollision/CollisionShapes/btBoxShape.h>
 #include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/resource/bulletshape.hpp>
+#include <components/debug/debuglog.hpp>
+#include <components/misc/convert.hpp>
 
 #include "../mwworld/class.hpp"
 
-#include "convert.hpp"
 #include "collisiontype.hpp"
 
 namespace MWPhysics
@@ -18,7 +19,7 @@ namespace MWPhysics
 
 Actor::Actor(const MWWorld::Ptr& ptr, osg::ref_ptr<const Resource::BulletShape> shape, btCollisionWorld* world)
   : mCanWaterWalk(false), mWalkingOnWater(false)
-  , mCollisionObject(0), mForce(0.f, 0.f, 0.f), mOnGround(false)
+  , mCollisionObject(nullptr), mForce(0.f, 0.f, 0.f), mOnGround(true), mOnSlope(false)
   , mInternalCollisionMode(true)
   , mExternalCollisionMode(true)
   , mCollisionWorld(world)
@@ -28,14 +29,44 @@ Actor::Actor(const MWWorld::Ptr& ptr, osg::ref_ptr<const Resource::BulletShape> 
     mHalfExtents = shape->mCollisionBoxHalfExtents;
     mMeshTranslation = shape->mCollisionBoxTranslate;
 
+    // We can not create actor without collisions - he will fall through the ground.
+    // In this case we should autogenerate collision box based on mesh shape
+    // (NPCs have bodyparts and use a different approach)
+    if (!ptr.getClass().isNpc() && mHalfExtents.length2() == 0.f)
+    {
+        const Resource::BulletShape* collisionShape = shape.get();
+        if (collisionShape && collisionShape->mCollisionShape)
+        {
+            btTransform transform;
+            transform.setIdentity();
+            btVector3 min;
+            btVector3 max;
+
+            collisionShape->mCollisionShape->getAabb(transform, min, max);
+            mHalfExtents.x() = (max[0] - min[0])/2.f;
+            mHalfExtents.y() = (max[1] - min[1])/2.f;
+            mHalfExtents.z() = (max[2] - min[2])/2.f;
+
+            mMeshTranslation = osg::Vec3f(0.f, 0.f, mHalfExtents.z());
+        }
+
+        if (mHalfExtents.length2() == 0.f)
+            Log(Debug::Error) << "Error: Failed to calculate bounding box for actor \"" << ptr.getCellRef().getRefId() << "\".";
+    }
+
     // Use capsule shape only if base is square (nonuniform scaling apparently doesn't work on it)
     if (std::abs(mHalfExtents.x()-mHalfExtents.y())<mHalfExtents.x()*0.05 && mHalfExtents.z() >= mHalfExtents.x())
     {
-        // Could also be btCapsuleShapeZ, but the movement solver seems to have issues with it (jumping on slopes doesn't work)
-        mShape.reset(new btCylinderShapeZ(toBullet(mHalfExtents)));
+        mShape.reset(new btCapsuleShapeZ(mHalfExtents.x(), 2*mHalfExtents.z() - 2*mHalfExtents.x()));
+        mRotationallyInvariant = true;
     }
     else
-        mShape.reset(new btBoxShape(toBullet(mHalfExtents)));
+    {
+        mShape.reset(new btBoxShape(Misc::Convert::toBullet(mHalfExtents)));
+        mRotationallyInvariant = false;
+    }
+
+    mConvexShape = static_cast<btConvexShape*>(mShape.get());
 
     mCollisionObject.reset(new btCollisionObject);
     mCollisionObject->setCollisionFlags(btCollisionObject::CF_KINEMATIC_OBJECT);
@@ -47,7 +78,7 @@ Actor::Actor(const MWWorld::Ptr& ptr, osg::ref_ptr<const Resource::BulletShape> 
     updateScale();
     updatePosition();
 
-    updateCollisionMask();
+    addCollisionMask(getCollisionMask());
 }
 
 Actor::~Actor()
@@ -70,15 +101,26 @@ void Actor::enableCollisionBody(bool collision)
     }
 }
 
+void Actor::addCollisionMask(int collisionMask)
+{
+    mCollisionWorld->addCollisionObject(mCollisionObject.get(), CollisionType_Actor, collisionMask);
+}
+
 void Actor::updateCollisionMask()
 {
     mCollisionWorld->removeCollisionObject(mCollisionObject.get());
+    addCollisionMask(getCollisionMask());
+}
+
+int Actor::getCollisionMask()
+{
     int collisionMask = CollisionType_World | CollisionType_HeightMap;
     if (mExternalCollisionMode)
         collisionMask |= CollisionType_Actor | CollisionType_Projectile | CollisionType_Door;
     if (mCanWaterWalk)
         collisionMask |= CollisionType_Water;
-    mCollisionWorld->addCollisionObject(mCollisionObject.get(), CollisionType_Actor, collisionMask);
+    return collisionMask;
+    
 }
 
 void Actor::updatePosition()
@@ -96,13 +138,13 @@ void Actor::updateCollisionObjectPosition()
     btTransform tr = mCollisionObject->getWorldTransform();
     osg::Vec3f scaledTranslation = mRotation * osg::componentMultiply(mMeshTranslation, mScale);
     osg::Vec3f newPosition = scaledTranslation + mPosition;
-    tr.setOrigin(toBullet(newPosition));
+    tr.setOrigin(Misc::Convert::toBullet(newPosition));
     mCollisionObject->setWorldTransform(tr);
 }
 
 osg::Vec3f Actor::getCollisionObjectPosition() const
 {
-    return toOsg(mCollisionObject->getWorldTransform().getOrigin());
+    return Misc::Convert::toOsg(mCollisionObject->getWorldTransform().getOrigin());
 }
 
 void Actor::setPosition(const osg::Vec3f &position)
@@ -127,10 +169,15 @@ void Actor::updateRotation ()
 {
     btTransform tr = mCollisionObject->getWorldTransform();
     mRotation = mPtr.getRefData().getBaseNode()->getAttitude();
-    tr.setRotation(toBullet(mRotation));
+    tr.setRotation(Misc::Convert::toBullet(mRotation));
     mCollisionObject->setWorldTransform(tr);
 
     updateCollisionObjectPosition();
+}
+
+bool Actor::isRotationallyInvariant() const
+{
+    return mRotationallyInvariant;
 }
 
 void Actor::updateScale()
@@ -140,7 +187,7 @@ void Actor::updateScale()
 
     mPtr.getClass().adjustScale(mPtr, scaleVec, false);
     mScale = scaleVec;
-    mShape->setLocalScaling(toBullet(mScale));
+    mShape->setLocalScaling(Misc::Convert::toBullet(mScale));
 
     scaleVec = osg::Vec3f(scale,scale,scale);
     mPtr.getClass().adjustScale(mPtr, scaleVec, true);
@@ -152,6 +199,11 @@ void Actor::updateScale()
 osg::Vec3f Actor::getHalfExtents() const
 {
     return osg::componentMultiply(mHalfExtents, mScale);
+}
+
+osg::Vec3f Actor::getOriginalHalfExtents() const
+{
+    return mHalfExtents;
 }
 
 osg::Vec3f Actor::getRenderingHalfExtents() const
@@ -167,6 +219,11 @@ void Actor::setInertialForce(const osg::Vec3f &force)
 void Actor::setOnGround(bool grounded)
 {
     mOnGround = grounded;
+}
+
+void Actor::setOnSlope(bool slope)
+{
+    mOnSlope = slope;
 }
 
 bool Actor::isWalkingOnWater() const

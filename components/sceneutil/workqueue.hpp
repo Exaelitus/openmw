@@ -1,15 +1,14 @@
 #ifndef OPENMW_COMPONENTS_SCENEUTIL_WORKQUEUE_H
 #define OPENMW_COMPONENTS_SCENEUTIL_WORKQUEUE_H
 
-#include <OpenThreads/Atomic>
-#include <OpenThreads/Mutex>
-#include <OpenThreads/Condition>
-#include <OpenThreads/Thread>
-
 #include <osg/Referenced>
 #include <osg/ref_ptr>
 
+#include <atomic>
 #include <queue>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 namespace SceneUtil
 {
@@ -17,9 +16,6 @@ namespace SceneUtil
     class WorkItem : public osg::Referenced
     {
     public:
-        WorkItem();
-        virtual ~WorkItem();
-
         /// Override in a derived WorkItem to perform actual work.
         virtual void doWork() {}
 
@@ -31,10 +27,13 @@ namespace SceneUtil
         /// Internal use by the WorkQueue.
         void signalDone();
 
-    protected:
-        OpenThreads::Atomic mDone;
-        OpenThreads::Mutex mMutex;
-        OpenThreads::Condition mCondition;
+        /// Set abort flag in order to return from doWork() as soon as possible. May not be respected by all WorkItems.
+        virtual void abort() {}
+
+    private:
+        std::atomic_bool mDone {false};
+        std::mutex mMutex;
+        std::condition_variable mCondition;
     };
 
     class WorkThread;
@@ -54,30 +53,40 @@ namespace SceneUtil
         void addWorkItem(osg::ref_ptr<WorkItem> item, bool front=false);
 
         /// Get the next work item from the front of the queue. If the queue is empty, waits until a new item is added.
-        /// If the workqueue is in the process of being destroyed, may return NULL.
+        /// If the workqueue is in the process of being destroyed, may return nullptr.
         /// @par Used internally by the WorkThread.
         osg::ref_ptr<WorkItem> removeWorkItem();
+
+        unsigned int getNumItems() const;
+
+        unsigned int getNumActiveThreads() const;
 
     private:
         bool mIsReleased;
         std::deque<osg::ref_ptr<WorkItem> > mQueue;
 
-        OpenThreads::Mutex mMutex;
-        OpenThreads::Condition mCondition;
+        mutable std::mutex mMutex;
+        std::condition_variable mCondition;
 
-        std::vector<WorkThread*> mThreads;
+        std::vector<std::unique_ptr<WorkThread>> mThreads;
     };
 
     /// Internally used by WorkQueue.
-    class WorkThread : public OpenThreads::Thread
+    class WorkThread
     {
     public:
-        WorkThread(WorkQueue* workQueue);
+        WorkThread(WorkQueue& workQueue);
 
-        virtual void run();
+        ~WorkThread();
+
+        bool isActive() const;
 
     private:
         WorkQueue* mWorkQueue;
+        std::atomic<bool> mActive;
+        std::thread mThread;
+
+        void run();
     };
 
 

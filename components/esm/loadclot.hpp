@@ -39,8 +39,8 @@ struct Clothing
     {
         int mType;
         float mWeight;
-        short mValue;
-        short mEnchant;
+        unsigned short mValue;
+        unsigned short mEnchant;
     };
     CTDTstruct mData;
 

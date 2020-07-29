@@ -1,13 +1,12 @@
 #include "linuxpath.hpp"
 
-#if defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__)
 
-#include <cstdlib>
-#include <cstring>
 #include <pwd.h>
 #include <unistd.h>
 #include <boost/filesystem/fstream.hpp>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/stringops.hpp>
 
 
@@ -16,15 +15,15 @@ namespace
     boost::filesystem::path getUserHome()
     {
         const char* dir = getenv("HOME");
-        if (dir == NULL)
+        if (dir == nullptr)
         {
             struct passwd* pwd = getpwuid(getuid());
-            if (pwd != NULL)
+            if (pwd != nullptr)
             {
                 dir = pwd->pw_dir;
             }
         }
-        if (dir == NULL)
+        if (dir == nullptr)
             return boost::filesystem::path();
         else
             return boost::filesystem::path(dir);
@@ -52,6 +51,9 @@ namespace Files
 LinuxPath::LinuxPath(const std::string& application_name)
     : mName(application_name)
 {
+    boost::filesystem::path localPath = getLocalPath();
+    if (chdir(localPath.string().c_str()) != 0)
+        Log(Debug::Warning) << "Error " << errno << " when changing current directory";
 }
 
 boost::filesystem::path LinuxPath::getUserConfigPath() const
@@ -77,7 +79,20 @@ boost::filesystem::path LinuxPath::getGlobalConfigPath() const
 
 boost::filesystem::path LinuxPath::getLocalPath() const
 {
-    return boost::filesystem::path("./");
+    boost::filesystem::path localPath("./");
+    std::string binPath(pathconf(".", _PC_PATH_MAX), '\0');
+    const char *statusPaths[] = {"/proc/self/exe", "/proc/self/file", "/proc/curproc/exe", "/proc/curproc/file"};
+
+    for(const char *path : statusPaths)
+    {
+        if (readlink(path, &binPath[0], binPath.size()) != -1)
+        {
+            localPath = boost::filesystem::path(binPath).parent_path() / "/";
+            break;
+        }
+    }
+
+    return localPath;
 }
 
 boost::filesystem::path LinuxPath::getGlobalDataPath() const
@@ -159,4 +174,4 @@ boost::filesystem::path LinuxPath::getInstallPath() const
 
 } /* namespace Files */
 
-#endif /* defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) */
+#endif /* defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__) */

@@ -18,6 +18,7 @@ namespace osg
 namespace Terrain
 {
     /// We keep storage of terrain data abstract here since we need different implementations for game and editor
+    /// @note The implementation must be thread safe.
     class Storage
     {
     public:
@@ -26,6 +27,14 @@ namespace Terrain
     public:
         /// Get bounds of the whole terrain in cell units
         virtual void getBounds(float& minX, float& maxX, float& minY, float& maxY) = 0;
+
+        /// Return true if there is land data for this cell
+        /// May be overriden for a faster implementation
+        virtual bool hasData(int cellX, int cellY)
+        {
+            float dummy;
+            return getMinMaxHeights(1, osg::Vec2f(cellX+0.5, cellY+0.5), dummy, dummy);
+        }
 
         /// Get the minimum and maximum heights of a terrain region.
         /// @note Will only be called for chunks with size = minBatchSize, i.e. leafs of the quad tree.
@@ -51,7 +60,7 @@ namespace Terrain
         virtual void fillVertexBuffers (int lodLevel, float size, const osg::Vec2f& center,
                                 osg::ref_ptr<osg::Vec3Array> positions,
                                 osg::ref_ptr<osg::Vec3Array> normals,
-                                osg::ref_ptr<osg::Vec4Array> colours) = 0;
+                                osg::ref_ptr<osg::Vec4ubArray> colours) = 0;
 
         typedef std::vector<osg::ref_ptr<osg::Image> > ImageVector;
         /// Create textures holding layer blend values for a terrain chunk.
@@ -60,24 +69,20 @@ namespace Terrain
         /// @note May be called from background threads. Make sure to only call thread-safe functions from here!
         /// @param chunkSize size of the terrain chunk in cell units
         /// @param chunkCenter center of the chunk in cell units
-        /// @param pack Whether to pack blend values for up to 4 layers into one texture (one in each channel) -
-        ///        otherwise, each texture contains blend values for one layer only. Shader-based rendering
-        ///        can utilize packing, FFP can't.
         /// @param blendmaps created blendmaps will be written here
         /// @param layerList names of the layer textures used will be written here
-        virtual void getBlendmaps (float chunkSize, const osg::Vec2f& chunkCenter, bool pack,
-                           ImageVector& blendmaps,
-                           std::vector<LayerInfo>& layerList) = 0;
+        virtual void getBlendmaps (float chunkSize, const osg::Vec2f& chunkCenter, ImageVector& blendmaps,
+                               std::vector<LayerInfo>& layerList) = 0;
 
         virtual float getHeightAt (const osg::Vec3f& worldPos) = 0;
-
-        virtual LayerInfo getDefaultLayer() = 0;
 
         /// Get the transformation factor for mapping cell units to world units.
         virtual float getCellWorldSize() = 0;
 
         /// Get the number of vertices on one side for each cell. Should be (power of two)+1
         virtual int getCellVertices() = 0;
+
+        virtual int getBlendmapScale(float chunkSize) = 0;
     };
 
 }

@@ -1,7 +1,8 @@
 #ifndef MISC_UTF8ITER_HPP
 #define MISC_UTF8ITER_HPP
 
-#include <boost/tuple/tuple.hpp>
+#include <cstring>
+#include <tuple>
 
 class Utf8Stream
 {
@@ -15,6 +16,11 @@ public:
 
     Utf8Stream (Point begin, Point end) :
         cur (begin), nxt (begin), end (end), val(Utf8Stream::sBadChar())
+    {
+    }
+
+    Utf8Stream (const char * str) :
+        cur ((unsigned char*) str), nxt ((unsigned char*) str), end ((unsigned char*) str + strlen(str)), val(Utf8Stream::sBadChar())
     {
     }
 
@@ -60,7 +66,7 @@ public:
         int octets;
         UnicodeChar chr;
 
-        boost::tie (octets, chr) = octet_count (*cur++);
+        std::tie (octets, chr) = octet_count (*cur++);
 
         if (octets > 5)
             return std::make_pair (sBadChar(), cur);
@@ -104,7 +110,7 @@ private:
 
     void next ()
     {
-        boost::tie (val, nxt) = decode (nxt, end);
+        std::tie (val, nxt) = decode (nxt, end);
     }
 
     Point cur;

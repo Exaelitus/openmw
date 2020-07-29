@@ -1,7 +1,10 @@
 #ifndef MWGUI_RACE_H
 #define MWGUI_RACE_H
 
+#include <memory>
+
 #include "windowbase.hpp"
+#include <MyGUI_RenderManager.h>
 
 
 namespace MWGui
@@ -19,9 +22,9 @@ namespace ESM
     struct NPC;
 }
 
-namespace osgViewer
+namespace osg
 {
-    class Viewer;
+    class Group;
 }
 
 namespace Resource
@@ -34,7 +37,7 @@ namespace MWGui
     class RaceDialog : public WindowModal
     {
     public:
-        RaceDialog(osgViewer::Viewer* viewer, Resource::ResourceSystem* resourceSystem);
+        RaceDialog(osg::Group* parent, Resource::ResourceSystem* resourceSystem);
 
         enum Gender
         {
@@ -50,8 +53,10 @@ namespace MWGui
         void setGender(Gender gender) { mGenderIndex = gender == GM_Male ? 0 : 1; }
 
         void setNextButtonShow(bool shown);
-        virtual void open();
-        virtual void close();
+        virtual void onOpen();
+        virtual void onClose();
+
+        bool exit() { return false; }
 
         // Events
         typedef MyGUI::delegates::CMultiDelegate0 EventHandle_Void;
@@ -93,7 +98,7 @@ namespace MWGui
 
         void getBodyParts (int part, std::vector<std::string>& out);
 
-        osgViewer::Viewer* mViewer;
+        osg::Group* mParent;
         Resource::ResourceSystem* mResourceSystem;
 
         std::vector<std::string> mAvailableHeads;
@@ -115,8 +120,8 @@ namespace MWGui
 
         float mCurrentAngle;
 
-        std::auto_ptr<MWRender::RaceSelectionPreview> mPreview;
-        std::auto_ptr<MyGUI::ITexture> mPreviewTexture;
+        std::unique_ptr<MWRender::RaceSelectionPreview> mPreview;
+        std::unique_ptr<MyGUI::ITexture> mPreviewTexture;
 
         bool mPreviewDirty;
     };

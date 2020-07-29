@@ -17,11 +17,16 @@ namespace MWGui
 
         ContainerItemModel (const MWWorld::Ptr& source);
 
+        virtual bool allowedToUseItems() const;
+
+        virtual bool onDropItem(const MWWorld::Ptr &item, int count);
+        virtual bool onTakeItem(const MWWorld::Ptr &item, int count);
+
         virtual ItemStack getItem (ModelIndex index);
         virtual ModelIndex getIndex (ItemStack item);
         virtual size_t getItemCount();
 
-        virtual MWWorld::Ptr copyItem (const ItemStack& item, size_t count, bool setNewOwner=false);
+        virtual MWWorld::Ptr copyItem (const ItemStack& item, size_t count, bool allowAutoEquip = true);
         virtual void removeItem (const ItemStack& item, size_t count);
 
         virtual void update();

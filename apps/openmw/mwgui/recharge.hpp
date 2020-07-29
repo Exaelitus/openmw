@@ -3,6 +3,8 @@
 
 #include "windowbase.hpp"
 
+#include "itemselection.hpp"
+
 namespace MWWorld
 {
     class Ptr;
@@ -11,26 +13,27 @@ namespace MWWorld
 namespace MWGui
 {
 
+class ItemSelectionDialog;
 class ItemWidget;
+class ItemChargeView;
 
 class Recharge : public WindowBase
 {
 public:
     Recharge();
 
-    virtual void open();
+    virtual void onOpen();
 
-    virtual void exit();
-
-    void start (const MWWorld::Ptr& gem);
+    void setPtr (const MWWorld::Ptr& gem);
 
 protected:
-    MyGUI::Widget* mBox;
-    MyGUI::ScrollView* mView;
+    ItemChargeView* mBox;
 
     MyGUI::Widget* mGemBox;
 
     ItemWidget* mGemIcon;
+
+    ItemSelectionDialog* mItemSelectionDialog;
 
     MyGUI::TextBox* mChargeLabel;
 
@@ -38,7 +41,12 @@ protected:
 
     void updateView();
 
-    void onItemClicked (MyGUI::Widget* sender);
+    void onSelectItem(MyGUI::Widget* sender);
+
+    void onItemSelected(MWWorld::Ptr item);
+    void onItemCancel();
+
+    void onItemClicked (MyGUI::Widget* sender, const MWWorld::Ptr& item);
     void onCancel (MyGUI::Widget* sender);
     void onMouseWheel(MyGUI::Widget* _sender, int _rel);
 

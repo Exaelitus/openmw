@@ -1,5 +1,7 @@
 #include "resourcesystem.hpp"
 
+#include <algorithm>
+
 #include "scenemanager.hpp"
 #include "imagemanager.hpp"
 #include "niffilemanager.hpp"
@@ -28,8 +30,6 @@ namespace Resource
         // this has to be defined in the .cpp file as we can't delete incomplete types
 
         mResourceManagers.clear();
-
-        // no delete, all handled by auto_ptr
     }
 
     SceneManager* ResourceSystem::getSceneManager()
@@ -54,7 +54,7 @@ namespace Resource
 
     void ResourceSystem::setExpiryDelay(double expiryDelay)
     {
-        for (std::vector<ResourceManager*>::iterator it = mResourceManagers.begin(); it != mResourceManagers.end(); ++it)
+        for (std::vector<BaseResourceManager*>::iterator it = mResourceManagers.begin(); it != mResourceManagers.end(); ++it)
             (*it)->setExpiryDelay(expiryDelay);
 
         // NIF files aren't needed any more once the converted objects are cached in SceneManager / BulletShapeManager,
@@ -64,18 +64,24 @@ namespace Resource
 
     void ResourceSystem::updateCache(double referenceTime)
     {
-        for (std::vector<ResourceManager*>::iterator it = mResourceManagers.begin(); it != mResourceManagers.end(); ++it)
+        for (std::vector<BaseResourceManager*>::iterator it = mResourceManagers.begin(); it != mResourceManagers.end(); ++it)
             (*it)->updateCache(referenceTime);
     }
 
-    void ResourceSystem::addResourceManager(ResourceManager *resourceMgr)
+    void ResourceSystem::clearCache()
+    {
+        for (std::vector<BaseResourceManager*>::iterator it = mResourceManagers.begin(); it != mResourceManagers.end(); ++it)
+            (*it)->clearCache();
+    }
+
+    void ResourceSystem::addResourceManager(BaseResourceManager *resourceMgr)
     {
         mResourceManagers.push_back(resourceMgr);
     }
 
-    void ResourceSystem::removeResourceManager(ResourceManager *resourceMgr)
+    void ResourceSystem::removeResourceManager(BaseResourceManager *resourceMgr)
     {
-        std::vector<ResourceManager*>::iterator found = std::find(mResourceManagers.begin(), mResourceManagers.end(), resourceMgr);
+        std::vector<BaseResourceManager*>::iterator found = std::find(mResourceManagers.begin(), mResourceManagers.end(), resourceMgr);
         if (found != mResourceManagers.end())
             mResourceManagers.erase(found);
     }
@@ -83,6 +89,18 @@ namespace Resource
     const VFS::Manager* ResourceSystem::getVFS() const
     {
         return mVFS;
+    }
+
+    void ResourceSystem::reportStats(unsigned int frameNumber, osg::Stats *stats) const
+    {
+        for (std::vector<BaseResourceManager*>::const_iterator it = mResourceManagers.begin(); it != mResourceManagers.end(); ++it)
+            (*it)->reportStats(frameNumber, stats);
+    }
+
+    void ResourceSystem::releaseGLObjects(osg::State *state)
+    {
+        for (std::vector<BaseResourceManager*>::const_iterator it = mResourceManagers.begin(); it != mResourceManagers.end(); ++it)
+            (*it)->releaseGLObjects(state);
     }
 
 }

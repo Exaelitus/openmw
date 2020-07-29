@@ -4,6 +4,9 @@
 
 #include <MyGUI_ScrollView.h>
 #include <MyGUI_Gui.h>
+#include <MyGUI_ItemBox.h>
+
+#include <components/widgets/box.hpp>
 
 #include "../mwbase/world.hpp"
 #include "../mwbase/environment.hpp"
@@ -14,18 +17,19 @@
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/class.hpp"
 
-#include "widgets.hpp"
-
 #include "itemwidget.hpp"
+#include "itemchargeview.hpp"
+#include "sortfilteritemmodel.hpp"
+#include "inventoryitemmodel.hpp"
 
 namespace MWGui
 {
 
 Repair::Repair()
     : WindowBase("openmw_repair.layout")
+    , mItemSelectionDialog(nullptr)
 {
     getWidget(mRepairBox, "RepairBox");
-    getWidget(mRepairView, "RepairView");
     getWidget(mToolBox, "ToolBox");
     getWidget(mToolIcon, "ToolIcon");
     getWidget(mUsesLabel, "UsesLabel");
@@ -33,27 +37,34 @@ Repair::Repair()
     getWidget(mCancelButton, "CancelButton");
 
     mCancelButton->eventMouseButtonClick += MyGUI::newDelegate(this, &Repair::onCancel);
+
+    mRepairBox->eventItemClicked += MyGUI::newDelegate(this, &Repair::onRepairItem);
+    mRepairBox->setDisplayMode(ItemChargeView::DisplayMode_Health);
+
+    mToolIcon->eventMouseButtonClick += MyGUI::newDelegate(this, &Repair::onSelectItem);
 }
 
-void Repair::open()
+void Repair::onOpen()
 {
     center();
+
+    SortFilterItemModel * model = new SortFilterItemModel(new InventoryItemModel(MWMechanics::getPlayer()));
+    model->setFilter(SortFilterItemModel::Filter_OnlyRepairable);
+    mRepairBox->setModel(model);
+
     // Reset scrollbars
-    mRepairView->setViewOffset(MyGUI::IntPoint(0, 0));
+    mRepairBox->resetScrollbars();
 }
 
-void Repair::exit()
+void Repair::setPtr(const MWWorld::Ptr &item)
 {
-    MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Repair);
-}
+    MWBase::Environment::get().getWindowManager()->playSound("Item Repair Up");
 
-void Repair::startRepairItem(const MWWorld::Ptr &item)
-{
     mRepair.setTool(item);
 
     mToolIcon->setItem(item);
     mToolIcon->setUserString("ToolTipType", "ItemPtr");
-    mToolIcon->setUserData(item);
+    mToolIcon->setUserData(MWWorld::Ptr(item));
 
     updateRepairView();
 }
@@ -67,6 +78,8 @@ void Repair::updateRepairView()
 
     float quality = ref->mBase->mData.mQuality;
 
+    mToolIcon->setUserData(mRepair.getTool());
+
     std::stringstream qualityStr;
     qualityStr << std::setprecision(3) << quality;
 
@@ -75,89 +88,67 @@ void Repair::updateRepairView()
 
     bool toolBoxVisible = (mRepair.getTool().getRefData().getCount() != 0);
     mToolBox->setVisible(toolBoxVisible);
+    mToolBox->setUserString("Hidden", toolBoxVisible ? "false" : "true");
 
-    bool toolBoxWasVisible = (mRepairBox->getPosition().top != mToolBox->getPosition().top);
-
-    if (toolBoxVisible && !toolBoxWasVisible)
+    if (!toolBoxVisible)
     {
-        // shrink
-        mRepairBox->setPosition(mRepairBox->getPosition() + MyGUI::IntPoint(0,mToolBox->getSize().height));
-        mRepairBox->setSize(mRepairBox->getSize() - MyGUI::IntSize(0,mToolBox->getSize().height));
-    }
-    else if (!toolBoxVisible && toolBoxWasVisible)
-    {
-        // expand
-        mRepairBox->setPosition(MyGUI::IntPoint (mRepairBox->getPosition().left, mToolBox->getPosition().top));
-        mRepairBox->setSize(mRepairBox->getSize() + MyGUI::IntSize(0,mToolBox->getSize().height));
+        mToolIcon->setItem(MWWorld::Ptr());
+        mToolIcon->clearUserStrings();
     }
 
-    while (mRepairView->getChildCount())
-        MyGUI::Gui::getInstance().destroyWidget(mRepairView->getChildAt(0));
+    mRepairBox->update();
 
-    int currentY = 0;
+    Gui::Box* box = dynamic_cast<Gui::Box*>(mMainWidget);
+    if (box == nullptr)
+        throw std::runtime_error("main widget must be a box");
 
-    MWWorld::Ptr player = MWMechanics::getPlayer();
-    MWWorld::ContainerStore& store = player.getClass().getContainerStore(player);
-    int categories = MWWorld::ContainerStore::Type_Weapon | MWWorld::ContainerStore::Type_Armor;
-    for (MWWorld::ContainerStoreIterator iter (store.begin(categories));
-         iter!=store.end(); ++iter)
-    {
-        if (iter->getClass().hasItemHealth(*iter))
-        {
-            int maxDurability = iter->getClass().getItemMaxHealth(*iter);
-            int durability = iter->getClass().getItemHealth(*iter);
-            if (maxDurability == durability)
-                continue;
-
-            MyGUI::TextBox* text = mRepairView->createWidget<MyGUI::TextBox> (
-                        "SandText", MyGUI::IntCoord(8, currentY, mRepairView->getWidth()-8, 18), MyGUI::Align::Default);
-            text->setCaption(iter->getClass().getName(*iter));
-            text->setNeedMouseFocus(false);
-            currentY += 19;
-
-            ItemWidget* icon = mRepairView->createWidget<ItemWidget> (
-                        "MW_ItemIconSmall", MyGUI::IntCoord(16, currentY, 32, 32), MyGUI::Align::Default);
-            icon->setItem(*iter);
-            icon->setUserString("ToolTipType", "ItemPtr");
-            icon->setUserData(*iter);
-            icon->eventMouseButtonClick += MyGUI::newDelegate(this, &Repair::onRepairItem);
-            icon->eventMouseWheel += MyGUI::newDelegate(this, &Repair::onMouseWheel);
-
-            Widgets::MWDynamicStatPtr chargeWidget = mRepairView->createWidget<Widgets::MWDynamicStat>
-                    ("MW_ChargeBar", MyGUI::IntCoord(72, currentY+2, 199, 20), MyGUI::Align::Default);
-            chargeWidget->setValue(durability, maxDurability);
-            chargeWidget->setNeedMouseFocus(false);
-
-            currentY += 32 + 4;
-        }
-    }
-    // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the scrollbar is hidden
-    mRepairView->setVisibleVScroll(false);
-    mRepairView->setCanvasSize (MyGUI::IntSize(mRepairView->getWidth(), std::max(mRepairView->getHeight(), currentY)));
-    mRepairView->setVisibleVScroll(true);
+    box->notifyChildrenSizeChanged();
+    center();
 }
 
-void Repair::onCancel(MyGUI::Widget *sender)
+void Repair::onSelectItem(MyGUI::Widget *sender)
 {
-    exit();
+    delete mItemSelectionDialog;
+    mItemSelectionDialog = new ItemSelectionDialog("#{sRepair}");
+    mItemSelectionDialog->eventItemSelected += MyGUI::newDelegate(this, &Repair::onItemSelected);
+    mItemSelectionDialog->eventDialogCanceled += MyGUI::newDelegate(this, &Repair::onItemCancel);
+    mItemSelectionDialog->setVisible(true);
+    mItemSelectionDialog->openContainer(MWMechanics::getPlayer());
+    mItemSelectionDialog->setFilter(SortFilterItemModel::Filter_OnlyRepairTools);
 }
 
-void Repair::onRepairItem(MyGUI::Widget *sender)
+void Repair::onItemSelected(MWWorld::Ptr item)
+{
+    mItemSelectionDialog->setVisible(false);
+
+    mToolIcon->setItem(item);
+    mToolIcon->setUserString ("ToolTipType", "ItemPtr");
+    mToolIcon->setUserData(item);
+
+    mRepair.setTool(item);
+
+    MWBase::Environment::get().getWindowManager()->playSound(item.getClass().getDownSoundId(item));
+    updateRepairView();
+}
+
+void Repair::onItemCancel()
+{
+    mItemSelectionDialog->setVisible(false);
+}
+
+void Repair::onCancel(MyGUI::Widget* /*sender*/)
+{
+    MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Repair);
+}
+
+void Repair::onRepairItem(MyGUI::Widget* /*sender*/, const MWWorld::Ptr& ptr)
 {
     if (!mRepair.getTool().getRefData().getCount())
         return;
 
-    mRepair.repair(*sender->getUserData<MWWorld::Ptr>());
+    mRepair.repair(ptr);
 
     updateRepairView();
-}
-
-void Repair::onMouseWheel(MyGUI::Widget* _sender, int _rel)
-{
-    if (mRepairView->getViewOffset().top + _rel*0.3f > 0)
-        mRepairView->setViewOffset(MyGUI::IntPoint(0, 0));
-    else
-        mRepairView->setViewOffset(MyGUI::IntPoint(0, static_cast<int>(mRepairView->getViewOffset().top + _rel*0.3f)));
 }
 
 }

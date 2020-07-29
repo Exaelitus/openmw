@@ -17,6 +17,7 @@ namespace MWMechanics
     {
             T mBase;
             T mModified;
+            T mCurrentModified;
 
         public:
             typedef T Type;
@@ -28,18 +29,25 @@ namespace MWMechanics
             const T& getBase() const;
 
             T getModified() const;
+            T getCurrentModified() const;
             T getModifier() const;
+            T getCurrentModifier() const;
 
             /// Set base and modified to \a value.
             void set (const T& value);
-            void modify(const T& diff);
 
             /// Set base and adjust modified accordingly.
             void setBase (const T& value);
 
-            /// Set modified value an adjust base accordingly.
+            /// Set modified value and adjust base accordingly.
             void setModified (T value, const T& min, const T& max = std::numeric_limits<T>::max());
+
+            /// Set "current modified," used for drain and fortify. Unlike the regular modifier
+            /// this just adds and subtracts from the current value without changing the maximum.
+            void setCurrentModified(T value);
+
             void setModifier (const T& modifier);
+            void setCurrentModifier (const T& modifier);
 
             void writeState (ESM::StatState<T>& state) const;
             void readState (const ESM::StatState<T>& state);
@@ -74,6 +82,7 @@ namespace MWMechanics
 
             const T& getBase() const;
             T getModified() const;
+            T getCurrentModified() const;
             const T& getCurrent() const;
 
             /// Set base, modified and current to \a value.
@@ -82,14 +91,16 @@ namespace MWMechanics
             /// Set base and adjust modified accordingly.
             void setBase (const T& value);
 
-            /// Set modified value an adjust base accordingly.
+            /// Set modified value and adjust base accordingly.
             void setModified (T value, const T& min, const T& max = std::numeric_limits<T>::max());
 
-            /// Change modified relatively.
-            void modify (const T& diff, bool allowCurrentDecreaseBelowZero=false);
+            /// Set "current modified," used for drain and fortify. Unlike the regular modifier
+            /// this just adds and subtracts from the current value without changing the maximum.
+            void setCurrentModified(T value);
 
-            void setCurrent (const T& value, bool allowDecreaseBelowZero = false);
-            void setModifier (const T& modifier, bool allowCurrentDecreaseBelowZero=false);
+            void setCurrent (const T& value, bool allowDecreaseBelowZero = false, bool allowIncreaseAboveModified = false);
+            void setModifier (const T& modifier, bool allowCurrentToDecreaseBelowZero=false);
+            void setCurrentModifier (const T& modifier, bool allowCurrentToDecreaseBelowZero = false);
 
             void writeState (ESM::StatState<T>& state) const;
             void readState (const ESM::StatState<T>& state);
@@ -111,20 +122,20 @@ namespace MWMechanics
 
     class AttributeValue
     {
-        int mBase;
-        int mModifier;
+        float mBase;
+        float mModifier;
         float mDamage; // needs to be float to allow continuous damage
 
     public:
         AttributeValue();
 
-        int getModified() const;
-        int getBase() const;
-        int getModifier() const;
+        float getModified() const;
+        float getBase() const;
+        float getModifier() const;
 
-        void setBase(int base);
+        void setBase(float base);
 
-        void setModifier(int mod);
+        void setModifier(float mod);
 
         // Maximum attribute damage is limited to the modified value.
         // Note: I think MW applies damage directly to mModified, since you can also
@@ -134,8 +145,8 @@ namespace MWMechanics
 
         float getDamage() const;
 
-        void writeState (ESM::StatState<int>& state) const;
-        void readState (const ESM::StatState<int>& state);
+        void writeState (ESM::StatState<float>& state) const;
+        void readState (const ESM::StatState<float>& state);
     };
 
     class SkillValue : public AttributeValue
@@ -146,8 +157,8 @@ namespace MWMechanics
         float getProgress() const;
         void setProgress(float progress);
 
-        void writeState (ESM::StatState<int>& state) const;
-        void readState (const ESM::StatState<int>& state);
+        void writeState (ESM::StatState<float>& state) const;
+        void readState (const ESM::StatState<float>& state);
     };
 
     inline bool operator== (const AttributeValue& left, const AttributeValue& right)

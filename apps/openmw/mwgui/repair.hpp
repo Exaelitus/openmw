@@ -3,31 +3,34 @@
 
 #include "windowbase.hpp"
 
+#include "itemselection.hpp"
+
 #include "../mwmechanics/repair.hpp"
 
 namespace MWGui
 {
 
+class ItemSelectionDialog;
 class ItemWidget;
+class ItemChargeView;
 
 class Repair : public WindowBase
 {
 public:
     Repair();
 
-    virtual void open();
+    virtual void onOpen();
 
-    virtual void exit();
-
-    void startRepairItem (const MWWorld::Ptr& item);
+    void setPtr (const MWWorld::Ptr& item);
 
 protected:
-    MyGUI::Widget* mRepairBox;
-    MyGUI::ScrollView* mRepairView;
+    ItemChargeView* mRepairBox;
 
     MyGUI::Widget* mToolBox;
 
     ItemWidget* mToolIcon;
+
+    ItemSelectionDialog* mItemSelectionDialog;
 
     MyGUI::TextBox* mUsesLabel;
     MyGUI::TextBox* mQualityLabel;
@@ -38,9 +41,13 @@ protected:
 
     void updateRepairView();
 
-    void onRepairItem (MyGUI::Widget* sender);
-    void onCancel (MyGUI::Widget* sender);
-    void onMouseWheel(MyGUI::Widget* _sender, int _rel);
+    void onSelectItem(MyGUI::Widget* sender);
+
+    void onItemSelected(MWWorld::Ptr item);
+    void onItemCancel();
+
+    void onRepairItem(MyGUI::Widget* sender, const MWWorld::Ptr& ptr);
+    void onCancel(MyGUI::Widget* sender);
 
 };
 

@@ -5,6 +5,7 @@
 #include <QVBoxLayout>
 #include <QDialogButtonBox>
 #include <QPushButton>
+#include <QScreen>
 
 #include "filewidget.hpp"
 #include "adjusterwidget.hpp"
@@ -46,7 +47,7 @@ CSVDoc::NewGameDialogue::NewGameDialogue()
     connect (mFileWidget, SIGNAL (nameChanged (const QString&, bool)),
         mAdjusterWidget, SLOT (setName (const QString&, bool)));
 
-    QRect scr = QApplication::desktop()->screenGeometry();
+    QRect scr = QGuiApplication::primaryScreen()->geometry();
     QRect rect = geometry();
     move (scr.center().x() - rect.center().x(), scr.center().y() - rect.center().y());
 }

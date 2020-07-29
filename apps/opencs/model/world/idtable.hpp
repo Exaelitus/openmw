@@ -61,11 +61,16 @@ namespace CSMWorld
                              const std::string& destination,
                              UniversalId::Type type = UniversalId::Type_None);
 
+            bool touchRecord(const std::string& id);
+            ///< Will change the record state to modified, if it is not already.
+
+            std::string getId(int row) const;
+
             virtual QModelIndex getModelIndex (const std::string& id, int column) const;
 
             void setRecord (const std::string& id, const RecordBase& record,
                     UniversalId::Type type = UniversalId::Type_None);
-            ///< Add record or overwrite existing recrod.
+            ///< Add record or overwrite existing record.
 
             const RecordBase& getRecord (const std::string& id) const;
 
@@ -92,6 +97,29 @@ namespace CSMWorld
         protected:
 
             virtual CollectionBase *idCollection() const;
+    };
+
+    /// An IdTable customized to handle the more unique needs of LandTextureId's which behave
+    /// differently from other records. The major difference is that base records cannot be
+    /// modified.
+    class LandTextureIdTable : public IdTable
+    {
+        public:
+
+            struct ImportResults
+            {
+                using StringPair = std::pair<std::string,std::string>;
+
+                /// The newly added records
+                std::vector<std::string> createdRecords;
+                /// The 1st string is the original id, the 2nd is the mapped id
+                std::vector<StringPair> recordMapping;
+            };
+
+            LandTextureIdTable(CollectionBase* idCollection, unsigned int features=0);
+
+            /// Finds and maps/recreates the specified ids.
+            ImportResults importTextures(const std::vector<std::string>& ids);
     };
 }
 

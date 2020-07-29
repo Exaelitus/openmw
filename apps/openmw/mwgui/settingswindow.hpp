@@ -15,11 +15,11 @@ namespace MWGui
         public:
             SettingsWindow();
 
-            virtual void open();
-
-            virtual void exit();
+            virtual void onOpen();
 
             void updateControlsBox();
+
+            void onResChange(int, int) { center(); }
 
     protected:
             MyGUI::TabControl* mSettingsTab;
@@ -33,6 +33,7 @@ namespace MWGui
             MyGUI::Widget* mAnisotropyBox;
 
             MyGUI::ComboBox* mWaterTextureSize;
+            MyGUI::ComboBox* mWaterReflectionDetail;
 
             // controls
             MyGUI::ScrollView* mControlsBox;
@@ -52,6 +53,7 @@ namespace MWGui
             void highlightCurrentResolution();
 
             void onWaterTextureSizeChanged(MyGUI::ComboBox* _sender, size_t pos);
+            void onWaterReflectionDetailChanged(MyGUI::ComboBox* _sender, size_t pos);
 
             void onRebindAction(MyGUI::Widget* _sender);
             void onInputTabMouseWheel(MyGUI::Widget* _sender, int _rel);
@@ -66,6 +68,8 @@ namespace MWGui
 
             void configureWidgets(MyGUI::Widget* widget);
             void updateSliderLabel(MyGUI::ScrollBar* scroller, const std::string& value);
+
+            void layoutControlsBox();
         
         private:
             void resetScrollbars();

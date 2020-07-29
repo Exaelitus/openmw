@@ -22,6 +22,7 @@ namespace MWGui
             : imageSize(32)
             , remainingEnchantCharge(-1)
             , isPotion(false)
+            , isIngredient(false)
             , wordWrap(true)
         {}
 
@@ -41,6 +42,7 @@ namespace MWGui
         std::vector<std::string> notes;
 
         bool isPotion; // potions do not show target in the tooltip
+        bool isIngredient; // ingredients have no effect magnitude
         bool wordWrap;
     };
 
@@ -50,6 +52,7 @@ namespace MWGui
         ToolTips();
 
         void onFrame(float frameDuration);
+        void update(float frameDuration);
 
         void setEnabled(bool enabled);
 
@@ -58,10 +61,14 @@ namespace MWGui
 
         void setDelay(float delay);
 
-        void setFocusObject(const MWWorld::ConstPtr& focus);
+        void clear();
+
+        void setFocusObject(const MWWorld::Ptr& focus);
         void setFocusObjectScreenCoords(float min_x, float min_y, float max_x, float max_y);
         ///< set the screen-space position of the tooltip for focused object
 
+        static std::string getWeightString(const float weight, const std::string& prefix);
+        static std::string getPercentString(const float value, const std::string& prefix);
         static std::string getValueString(const int value, const std::string& prefix);
         ///< @return "prefix: value" or "" if value is 0
 
@@ -74,8 +81,14 @@ namespace MWGui
         static std::string getCountString(const int value);
         ///< @return blank string if count is 1, or else " (value)"
 
+        static std::string getSoulString(const MWWorld::CellRef& cellref);
+        ///< Returns a string containing the name of the creature that the ID in the cellref's soul field belongs to.
+
         static std::string getCellRefString(const MWWorld::CellRef& cellref);
         ///< Returns a string containing debug tooltip information about the given cellref.
+
+        static std::string getDurationString (float duration, const std::string& prefix);
+        ///< Returns duration as two largest time units, rounded down. Note: not localized; no line break.
 
         // these do not create an actual tooltip, but they fill in the data that is required so the tooltip
         // system knows what to show in case this widget is hovered
@@ -93,12 +106,12 @@ namespace MWGui
     private:
         MyGUI::Widget* mDynamicToolTipBox;
 
-        MWWorld::ConstPtr mFocusObject;
+        MWWorld::Ptr mFocusObject;
 
-        MyGUI::IntSize getToolTipViaPtr (int count, bool image=true);
+        MyGUI::IntSize getToolTipViaPtr (int count, bool image = true, bool isOwned = false);
         ///< @return requested tooltip size
 
-        MyGUI::IntSize createToolTip(const ToolTipInfo& info, bool isFocusObject);
+        MyGUI::IntSize createToolTip(const ToolTipInfo& info, bool isOwned = false);
         ///< @return requested tooltip size
         /// @param isFocusObject Is the object this tooltips originates from mFocusObject?
 
@@ -124,6 +137,8 @@ namespace MWGui
         bool mFullHelp;
         
         int mShowOwned;
+
+        float mFrameDuration;
     };
 }
 #endif

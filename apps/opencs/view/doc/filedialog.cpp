@@ -33,6 +33,11 @@ void CSVDoc::FileDialog::addFiles(const QString &path)
     mSelector->addFiles(path);
 }
 
+void CSVDoc::FileDialog::setEncoding(const QString &encoding)
+{
+    mSelector->setEncoding(encoding);
+}
+
 void CSVDoc::FileDialog::clearFiles()
 {
     mSelector->clearFiles();
@@ -42,7 +47,7 @@ QStringList CSVDoc::FileDialog::selectedFilePaths()
 {
     QStringList filePaths;
 
-    foreach (ContentSelectorModel::EsmFile *file, mSelector->selectedFiles() )
+    for (ContentSelectorModel::EsmFile *file : mSelector->selectedFiles() )
         filePaths.append(file->filePath());
 
     return filePaths;
@@ -184,7 +189,7 @@ void CSVDoc::FileDialog::slotRejected()
     if(mFileWidget)
     {
         delete mFileWidget;
-        mFileWidget = NULL;
+        mFileWidget = nullptr;
     }
     close();
 }
@@ -195,7 +200,7 @@ void CSVDoc::FileDialog::slotNewFile()
     if(mFileWidget)
     {
         delete mFileWidget;
-        mFileWidget = NULL;
+        mFileWidget = nullptr;
     }
     disconnect (ui.projectButtonBox, SIGNAL (accepted()), this, SLOT (slotNewFile()));
     close();

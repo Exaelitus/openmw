@@ -1,8 +1,7 @@
 #ifndef OPENMW_ESM_READER_H
 #define OPENMW_ESM_READER_H
 
-#include <stdint.h>
-#include <string.h>
+#include <cstdint>
 #include <cassert>
 #include <vector>
 #include <sstream>
@@ -33,8 +32,8 @@ public:
   int getVer() const { return mHeader.mData.version; }
   int getRecordCount() const { return mHeader.mData.records; }
   float getFVer() const { return (mHeader.mData.version == VER_12) ? 1.2f : 1.3f; }
-  const std::string getAuthor() const { return mHeader.mData.author.toString(); }
-  const std::string getDesc() const { return mHeader.mData.desc.toString(); }
+  const std::string getAuthor() const { return mHeader.mData.author; }
+  const std::string getDesc() const { return mHeader.mData.desc; }
   const std::vector<Header::MasterData> &getGameFiles() const { return mHeader.mMaster; }
   const Header& getHeader() const { return mHeader; }
   int getFormat() const;
@@ -80,12 +79,14 @@ public:
   //  terrain palette, but ESMReader does not pass a reference to the correct plugin
   //  to the individual load() methods. This hack allows to pass this reference
   //  indirectly to the load() method.
-  int mIdx;
-  void setIndex(const int index) {mIdx = index; mCtx.index = index;}
-  int getIndex() {return mIdx;}
+  void setIndex(const int index) { mCtx.index = index;}
+  int getIndex() {return mCtx.index;}
 
   void setGlobalReaderList(std::vector<ESMReader> *list) {mGlobalReaderList = list;}
   std::vector<ESMReader> *getGlobalReaderList() {return mGlobalReaderList;}
+
+  void addParentFileIndex(int index) { mCtx.parentFileIndices.push_back(index); }
+  const std::vector<int>& getParentFileIndices() const { return mCtx.parentFileIndices; }
 
   /*************************************************************************
    *
@@ -269,6 +270,8 @@ public:
   size_t getFileSize() const { return mFileSize; }
 
 private:
+  void clearCtx();
+
   Files::IStreamPtr mEsm;
 
   ESM_Context mCtx;

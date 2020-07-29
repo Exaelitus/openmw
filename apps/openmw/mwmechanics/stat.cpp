@@ -5,11 +5,11 @@
 namespace MWMechanics
 {
     template<typename T>
-    Stat<T>::Stat() : mBase (0), mModified (0) {}
+    Stat<T>::Stat() : mBase (0), mModified (0), mCurrentModified (0) {}
     template<typename T>
-    Stat<T>::Stat(T base) : mBase (base), mModified (base) {}
+    Stat<T>::Stat(T base) : mBase (base), mModified (base), mCurrentModified (base) {}
     template<typename T>
-    Stat<T>::Stat(T base, T modified) : mBase (base), mModified (modified) {}
+    Stat<T>::Stat(T base, T modified) : mBase (base), mModified (modified), mCurrentModified (modified) {}
 
     template<typename T>
     const T& Stat<T>::getBase() const
@@ -22,35 +22,42 @@ namespace MWMechanics
     {
         return std::max(static_cast<T>(0), mModified);
     }
+
+    template<typename T>
+    T Stat<T>::getCurrentModified() const
+    {
+        return mCurrentModified;
+    }
+
     template<typename T>
     T Stat<T>::getModifier() const
     {
         return mModified-mBase;
     }
+
+    template<typename T>
+    T Stat<T>::getCurrentModifier() const
+    {
+        return mCurrentModified - mModified;
+    }
+
     template<typename T>
     void Stat<T>::set (const T& value)
     {
+        T diff = value - mBase;
         mBase = mModified = value;
+        mCurrentModified += diff;
     }
-    template<typename T>
-    void Stat<T>::modify(const T& diff)
-    {
-        mBase += diff;
-        if(mBase >= static_cast<T>(0))
-            mModified += diff;
-        else
-        {
-            mModified += diff - mBase;
-            mBase = static_cast<T>(0);
-        }
-    }
+
     template<typename T>
     void Stat<T>::setBase (const T& value)
     {
         T diff = value - mBase;
         mBase = value;
         mModified += diff;
+        mCurrentModified += diff;
     }
+
     template<typename T>
     void Stat<T>::setModified (T value, const T& min, const T& max)
     {
@@ -69,7 +76,15 @@ namespace MWMechanics
 
         mModified = value;
         mBase += diff;
+        mCurrentModified += diff;
     }
+
+    template<typename T>
+    void Stat<T>::setCurrentModified(T value)
+    {
+        mCurrentModified = value;
+    }
+
     template<typename T>
     void Stat<T>::setModifier (const T& modifier)
     {
@@ -77,16 +92,23 @@ namespace MWMechanics
     }
 
     template<typename T>
+    void Stat<T>::setCurrentModifier(const T& modifier)
+    {
+        mCurrentModified = mModified + modifier;
+    }
+
+    template<typename T>
     void Stat<T>::writeState (ESM::StatState<T>& state) const
     {
         state.mBase = mBase;
-        state.mMod = mModified;
+        state.mMod = mCurrentModified;
     }
     template<typename T>
     void Stat<T>::readState (const ESM::StatState<T>& state)
     {
         mBase = state.mBase;
-        mModified = state.mMod;
+        mModified = state.mBase;
+        mCurrentModified = state.mMod;
     }
 
 
@@ -110,6 +132,12 @@ namespace MWMechanics
     {
         return mStatic.getModified();
     }
+    template<typename T>
+    T DynamicStat<T>::getCurrentModified() const
+    {
+        return mStatic.getCurrentModified();
+    }
+
     template<typename T>
     const T& DynamicStat<T>::getCurrent() const
     {
@@ -139,20 +167,21 @@ namespace MWMechanics
             mCurrent = getModified();
     }
     template<typename T>
-    void DynamicStat<T>::modify (const T& diff, bool allowCurrentDecreaseBelowZero)
+    void DynamicStat<T>::setCurrentModified(T value)
     {
-        mStatic.modify (diff);
-        setCurrent (getCurrent()+diff, allowCurrentDecreaseBelowZero);
+        mStatic.setCurrentModified(value);
     }
     template<typename T>
-    void DynamicStat<T>::setCurrent (const T& value, bool allowDecreaseBelowZero)
+    void DynamicStat<T>::setCurrent (const T& value, bool allowDecreaseBelowZero, bool allowIncreaseAboveModified)
     {
         if (value > mCurrent)
         {
             // increase
-            mCurrent = value;
-
-            if (mCurrent > getModified())
+            if (value <= getModified() || allowIncreaseAboveModified)
+                mCurrent = value;
+            else if (mCurrent > getModified())
+                return;
+            else
                 mCurrent = getModified();
         }
         else if (value > 0 || allowDecreaseBelowZero)
@@ -175,6 +204,16 @@ namespace MWMechanics
     }
 
     template<typename T>
+    void DynamicStat<T>::setCurrentModifier(const T& modifier, bool allowCurrentDecreaseBelowZero)
+    {
+        T diff = modifier - mStatic.getCurrentModifier();
+        mStatic.setCurrentModifier(modifier);
+
+        // The (modifier > 0) check here allows increase over modified only if the modifier is positive (a fortify effect is active).
+        setCurrent (getCurrent() + diff, allowCurrentDecreaseBelowZero, (modifier > 0));
+    }
+
+    template<typename T>
     void DynamicStat<T>::writeState (ESM::StatState<T>& state) const
     {
         mStatic.writeState (state);
@@ -188,39 +227,46 @@ namespace MWMechanics
     }
 
     AttributeValue::AttributeValue() :
-        mBase(0), mModifier(0), mDamage(0)
+        mBase(0.f), mModifier(0.f), mDamage(0.f)
     {
     }
 
-    int AttributeValue::getModified() const
+    float AttributeValue::getModified() const
     {
-        return std::max(0, mBase - (int) mDamage + mModifier);
+        return std::max(0.f, mBase - mDamage + mModifier);
     }
-    int AttributeValue::getBase() const
+    float AttributeValue::getBase() const
     {
         return mBase;
     }
-    int AttributeValue::getModifier() const
+    float AttributeValue::getModifier() const
     {
         return mModifier;
     }
 
-    void AttributeValue::setBase(int base)
+    void AttributeValue::setBase(float base)
     {
-        mBase = std::max(0, base);
+        mBase = base;
     }
 
-    void AttributeValue::setModifier(int mod)
+    void AttributeValue::setModifier(float mod)
     {
         mModifier = mod;
     }
 
     void AttributeValue::damage(float damage)
     {
-        mDamage += std::min(damage, (float)getModified());
+        float threshold = mBase + mModifier;
+
+        if (mDamage + damage > threshold)
+            mDamage = threshold;
+        else
+            mDamage += damage;
     }
     void AttributeValue::restore(float amount)
     {
+        if (mDamage <= 0) return;
+
         mDamage -= std::min(mDamage, amount);
     }
 
@@ -229,14 +275,14 @@ namespace MWMechanics
         return mDamage;
     }
 
-    void AttributeValue::writeState (ESM::StatState<int>& state) const
+    void AttributeValue::writeState (ESM::StatState<float>& state) const
     {
         state.mBase = mBase;
         state.mMod = mModifier;
         state.mDamage = mDamage;
     }
 
-    void AttributeValue::readState (const ESM::StatState<int>& state)
+    void AttributeValue::readState (const ESM::StatState<float>& state)
     {
         mBase = state.mBase;
         mModifier = state.mMod;
@@ -257,13 +303,13 @@ namespace MWMechanics
         mProgress = progress;
     }
 
-    void SkillValue::writeState (ESM::StatState<int>& state) const
+    void SkillValue::writeState (ESM::StatState<float>& state) const
     {
         AttributeValue::writeState (state);
         state.mProgress = mProgress;
     }
 
-    void SkillValue::readState (const ESM::StatState<int>& state)
+    void SkillValue::readState (const ESM::StatState<float>& state)
     {
         AttributeValue::readState (state);
         mProgress = state.mProgress;

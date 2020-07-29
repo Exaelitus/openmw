@@ -1,13 +1,9 @@
 #include "configurationmanager.hpp"
 
-#include <string>
-#include <iostream>
-#include <algorithm>
+#include <components/debug/debuglog.hpp>
+#include <components/files/escape.hpp>
 
-#include <boost/bind.hpp>
-#include <boost/algorithm/string/erase.hpp>
 #include <boost/filesystem/fstream.hpp>
-
 /**
  * \namespace Files
  */
@@ -22,7 +18,6 @@ static const char* const applicationName = "OpenMW";
 static const char* const applicationName = "openmw";
 #endif
 
-const char* const mwToken = "?mw?";
 const char* const localToken = "?local?";
 const char* const userDataToken = "?userdata?";
 const char* const globalToken = "?global?";
@@ -37,6 +32,14 @@ ConfigurationManager::ConfigurationManager(bool silent)
     boost::filesystem::create_directories(mFixedPath.getUserDataPath());
 
     mLogPath = mFixedPath.getUserConfigPath();
+
+    mScreenshotPath = mFixedPath.getUserDataPath() / "screenshots";
+
+    // probably not necessary but validate the creation of the screenshots directory and fallback to the original behavior if it fails
+    boost::system::error_code dirErr;
+    if (!boost::filesystem::create_directories(mScreenshotPath, dirErr) && !boost::filesystem::is_directory(mScreenshotPath)) {
+        mScreenshotPath = mFixedPath.getUserDataPath();
+    }
 }
 
 ConfigurationManager::~ConfigurationManager()
@@ -45,7 +48,6 @@ ConfigurationManager::~ConfigurationManager()
 
 void ConfigurationManager::setupTokensMapping()
 {
-    mTokensMapping.insert(std::make_pair(mwToken, &FixedPath<>::getInstallPath));
     mTokensMapping.insert(std::make_pair(localToken, &FixedPath<>::getLocalPath));
     mTokensMapping.insert(std::make_pair(userDataToken, &FixedPath<>::getUserDataPath));
     mTokensMapping.insert(std::make_pair(globalToken, &FixedPath<>::getGlobalDataPath));
@@ -57,9 +59,6 @@ void ConfigurationManager::readConfiguration(boost::program_options::variables_m
     bool silent = mSilent;
     mSilent = quiet;
 
-    loadConfig(mFixedPath.getUserConfigPath(), variables, description);
-    boost::program_options::notify(variables);
-
     // read either local or global config depending on type of installation
     bool loaded = loadConfig(mFixedPath.getLocalPath(), variables, description);
     boost::program_options::notify(variables);
@@ -68,6 +67,10 @@ void ConfigurationManager::readConfiguration(boost::program_options::variables_m
         loadConfig(mFixedPath.getGlobalConfigPath(), variables, description);
         boost::program_options::notify(variables);
     }
+
+    // User config has the highest priority.
+    loadConfig(mFixedPath.getUserConfigPath(), variables, description);
+    boost::program_options::notify(variables);
 
     mSilent = silent;
 }
@@ -78,8 +81,6 @@ void ConfigurationManager::processPaths(Files::PathContainer& dataDirs, bool cre
     for (Files::PathContainer::iterator it = dataDirs.begin(); it != dataDirs.end(); ++it)
     {
         path = it->string();
-        boost::erase_all(path, "\"");
-        *it = boost::filesystem::path(path);
 
         // Check if path contains a token
         if (!path.empty() && *path.begin() == '?')
@@ -127,7 +128,7 @@ void ConfigurationManager::processPaths(Files::PathContainer& dataDirs, bool cre
     }
 
     dataDirs.erase(std::remove_if(dataDirs.begin(), dataDirs.end(),
-        boost::bind(&boost::filesystem::path::empty, _1)), dataDirs.end());
+        std::bind(&boost::filesystem::path::empty, std::placeholders::_1)), dataDirs.end());
 }
 
 bool ConfigurationManager::loadConfig(const boost::filesystem::path& path,
@@ -139,22 +140,24 @@ bool ConfigurationManager::loadConfig(const boost::filesystem::path& path,
     if (boost::filesystem::is_regular_file(cfgFile))
     {
         if (!mSilent)
-            std::cout << "Loading config file: " << cfgFile.string() << "... ";
+            Log(Debug::Info) << "Loading config file: " << cfgFile.string();
 
-        boost::filesystem::ifstream configFileStream(cfgFile);
-        if (configFileStream.is_open())
+        boost::filesystem::ifstream configFileStreamUnfiltered(cfgFile);
+        boost::iostreams::filtering_istream configFileStream;
+        configFileStream.push(escape_hash_filter());
+        configFileStream.push(configFileStreamUnfiltered);
+        if (configFileStreamUnfiltered.is_open())
         {
             boost::program_options::store(boost::program_options::parse_config_file(
                 configFileStream, description, true), variables);
 
-            if (!mSilent)
-                std::cout << "done." << std::endl;
             return true;
         }
         else
         {
             if (!mSilent)
-                std::cout << "failed." << std::endl;
+                Log(Debug::Error) << "Loading failed.";
+
             return false;
         }
     }
@@ -199,6 +202,11 @@ const boost::filesystem::path& ConfigurationManager::getInstallPath() const
 const boost::filesystem::path& ConfigurationManager::getLogPath() const
 {
     return mLogPath;
+}
+
+const boost::filesystem::path& ConfigurationManager::getScreenshotPath() const
+{
+    return mScreenshotPath;
 }
 
 } /* namespace Cfg */

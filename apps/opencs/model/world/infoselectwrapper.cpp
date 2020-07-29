@@ -371,7 +371,6 @@ void CSMWorld::ConstInfoSelectWrapper::updateComparisonType()
         case Function_NotClass:
         case Function_NotRace:
         case Function_NotCell:
-        case Function_NotLocal:
         case Function_PcExpelled:
         case Function_PcCommonDisease:
         case Function_PcBlightDisease:
@@ -454,6 +453,7 @@ void CSMWorld::ConstInfoSelectWrapper::updateComparisonType()
         // Numeric
         case Function_Global:
         case Function_Local:
+        case Function_NotLocal:
 
         case Function_Health_Percent:
         case Function_PcHealthPercent:
@@ -520,7 +520,6 @@ std::pair<float, float> CSMWorld::ConstInfoSelectWrapper::getConditionFloatRange
     const float FloatMax = std::numeric_limits<float>::infinity();
     const float FloatMin = -std::numeric_limits<float>::infinity();
     const float Epsilon = std::numeric_limits<float>::epsilon();
-    const std::pair<float, float> InvalidRange(FloatMax, FloatMin);
 
     float value = mConstSelect.mValue.getFloat();
 
@@ -560,7 +559,6 @@ std::pair<int, int> CSMWorld::ConstInfoSelectWrapper::getValidIntRange() const
         case Function_NotClass:
         case Function_NotRace:
         case Function_NotCell:
-        case Function_NotLocal:
         case Function_PcExpelled:
         case Function_PcCommonDisease:
         case Function_PcBlightDisease:
@@ -657,6 +655,7 @@ std::pair<int, int> CSMWorld::ConstInfoSelectWrapper::getValidIntRange() const
         // Numeric
         case Function_Global:
         case Function_Local:
+        case Function_NotLocal:
             return std::pair<int, int>(IntMin, IntMax);
 
         case Function_PcMagicka:

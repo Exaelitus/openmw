@@ -19,15 +19,17 @@ namespace MWGui
         EnchantingDialog();
         virtual ~EnchantingDialog();
 
-        virtual void open();
+        virtual void onOpen();
 
-        virtual void exit();
+        void onFrame(float dt) { checkReferenceAvailable(); }
+        void clear() { resetReference(); }
 
         void setSoulGem (const MWWorld::Ptr& gem);
         void setItem (const MWWorld::Ptr& item);
 
-        void startEnchanting(MWWorld::Ptr actor);
-        void startSelfEnchanting(MWWorld::Ptr soulgem);
+        /// Actor Ptr: buy enchantment from this actor
+        /// Soulgem Ptr: player self-enchant
+        void setPtr(const MWWorld::Ptr& ptr);
 
         virtual void resetReference();
 
@@ -46,8 +48,11 @@ namespace MWGui
         void onBuyButtonClicked(MyGUI::Widget* sender);
         void updateLabels();
         void onTypeButtonClicked(MyGUI::Widget* sender);
+        void onAccept(MyGUI::EditBox* sender);
 
         ItemSelectionDialog* mItemSelectionDialog;
+
+        MyGUI::Widget* mChanceLayout;
 
         MyGUI::Button* mCancelButton;
         ItemWidget* mItemBox;
@@ -56,10 +61,11 @@ namespace MWGui
         MyGUI::Button* mTypeButton;
         MyGUI::Button* mBuyButton;
 
-        MyGUI::TextBox* mName;
+        MyGUI::EditBox* mName;
         MyGUI::TextBox* mEnchantmentPoints;
         MyGUI::TextBox* mCastCost;
         MyGUI::TextBox* mCharge;
+        MyGUI::TextBox* mSuccessChance;
         MyGUI::TextBox* mPrice;
         MyGUI::TextBox* mPriceText;
 

@@ -3,12 +3,18 @@
 #include <osg/Camera>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/settings/settings.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
 
+#include "../mwworld/class.hpp"
 #include "../mwworld/ptr.hpp"
 #include "../mwworld/refdata.hpp"
+
+#include "../mwmechanics/drawstate.hpp"
+#include "../mwmechanics/movement.hpp"
+#include "../mwmechanics/npcstats.hpp"
 
 #include "npcanimation.hpp"
 
@@ -45,29 +51,35 @@ namespace MWRender
     Camera::Camera (osg::Camera* camera)
     : mHeightScale(1.f),
       mCamera(camera),
-      mAnimation(NULL),
+      mAnimation(nullptr),
       mFirstPersonView(true),
-      mPreviewMode(false),
-      mFreeLook(true),
+      mMode(Mode::Normal),
+      mVanityAllowed(true),
+      mStandingPreviewAllowed(Settings::Manager::getBool("preview if stand still", "Camera")),
+      mDeferredRotationAllowed(Settings::Manager::getBool("deferred preview rotation", "Camera")),
       mNearest(30.f),
       mFurthest(800.f),
       mIsNearest(false),
       mHeight(124.f),
-      mMaxCameraDistance(192.f),
-      mDistanceAdjusted(false),
+      mBaseCameraDistance(Settings::Manager::getFloat("third person camera distance", "Camera")),
       mVanityToggleQueued(false),
+      mVanityToggleQueuedValue(false),
       mViewModeToggleQueued(false),
-      mCameraDistance(0.f)
+      mCameraDistance(0.f),
+      mMaxNextCameraDistance(800.f),
+      mFocalPointCurrentOffset(osg::Vec2d()),
+      mFocalPointTargetOffset(osg::Vec2d()),
+      mFocalPointTransitionSpeedCoef(1.f),
+      mSkipFocalPointTransition(true),
+      mPreviousTransitionInfluence(0.f),
+      mSmoothedSpeed(0.f),
+      mZoomOutWhenMoveCoef(Settings::Manager::getFloat("zoom out when move coef", "Camera")),
+      mDynamicCameraDistanceEnabled(false),
+      mShowCrosshairInThirdPersonMode(false),
+      mDeferredRotation(osg::Vec3f()),
+      mDeferredRotationDisabled(false)
     {
-        mVanity.enabled = false;
-        mVanity.allowed = true;
-
-        mPreviewCam.pitch = 0.f;
-        mPreviewCam.yaw = 0.f;
-        mPreviewCam.offset = 400.f;
-        mMainCam.pitch = 0.f;
-        mMainCam.yaw = 0.f;
-        mMainCam.offset = 400.f;
+        mCameraDistance = mBaseCameraDistance;
 
         mUpdateCallback = new UpdateRenderCameraCallback(this);
         mCamera->addUpdateCallback(mUpdateCallback);
@@ -78,39 +90,56 @@ namespace MWRender
         mCamera->removeUpdateCallback(mUpdateCallback);
     }
 
-    MWWorld::Ptr Camera::getTrackingPtr() const
+    osg::Vec3d Camera::getFocalPoint() const
     {
-        return mTrackingPtr;
-    }
-
-    osg::Vec3d Camera::getFocalPoint()
-    {
-        const osg::Node* trackNode = mTrackingNode;
-        if (!trackNode)
+        if (!mTrackingNode)
             return osg::Vec3d();
-        osg::NodePathList nodepaths = trackNode->getParentalNodePaths();
+        osg::NodePathList nodepaths = mTrackingNode->getParentalNodePaths();
         if (nodepaths.empty())
             return osg::Vec3d();
         osg::Matrix worldMat = osg::computeLocalToWorld(nodepaths[0]);
 
         osg::Vec3d position = worldMat.getTrans();
         if (!isFirstPerson())
+        {
             position.z() += mHeight * mHeightScale;
+
+            // We subtract 10.f here and add it within focalPointOffset in order to avoid camera clipping through ceiling.
+            // Needed because character's head can be a bit higher than collision area.
+            position.z() -= 10.f;
+
+            position += getFocalPointOffset() + mFocalPointAdjustment;
+        }
         return position;
+    }
+
+    osg::Vec3d Camera::getFocalPointOffset() const
+    {
+        osg::Vec3d offset(0, 0, 10.f);
+        offset.x() += mFocalPointCurrentOffset.x() * cos(getYaw());
+        offset.y() += mFocalPointCurrentOffset.x() * sin(getYaw());
+        offset.z() += mFocalPointCurrentOffset.y();
+        return offset;
+    }
+
+    void Camera::getPosition(osg::Vec3d &focal, osg::Vec3d &camera) const
+    {
+        focal = getFocalPoint();
+        osg::Vec3d offset(0,0,0);
+        if (!isFirstPerson())
+        {
+            osg::Quat orient =  osg::Quat(getPitch(), osg::Vec3d(1,0,0)) * osg::Quat(getYaw(), osg::Vec3d(0,0,1));
+            offset = orient * osg::Vec3d(0.f, -mCameraDistance, 0.f);
+        }
+        camera = focal + offset;
     }
 
     void Camera::updateCamera(osg::Camera *cam)
     {
-        if (mTrackingPtr.isEmpty())
-            return;
-
-        osg::Vec3d position = getFocalPoint();
+        osg::Vec3d focal, position;
+        getPosition(focal, position);
 
         osg::Quat orient =  osg::Quat(getPitch(), osg::Vec3d(1,0,0)) * osg::Quat(getYaw(), osg::Vec3d(0,0,1));
-
-        osg::Vec3d offset = orient * osg::Vec3d(0, -mCameraDistance, 0);
-        position += offset;
-
         osg::Vec3d forward = orient * osg::Vec3d(0,1,0);
         osg::Vec3d up = orient * osg::Vec3d(0,0,1);
 
@@ -136,11 +165,6 @@ namespace MWRender
         setPitch(pitch);
     }
 
-    void Camera::attachTo(const MWWorld::Ptr &ptr)
-    {
-        mTrackingPtr = ptr;
-    }
-
     void Camera::update(float duration, bool paused)
     {
         if (mAnimation->upperBodyReady())
@@ -148,12 +172,11 @@ namespace MWRender
             // Now process the view changes we queued earlier
             if (mVanityToggleQueued)
             {
-                toggleVanityMode(!mVanity.enabled);
+                toggleVanityMode(mVanityToggleQueuedValue);
                 mVanityToggleQueued = false;
             }
             if (mViewModeToggleQueued)
             {
-
                 togglePreviewMode(false);
                 toggleViewMode();
                 mViewModeToggleQueued = false;
@@ -163,14 +186,88 @@ namespace MWRender
         if (paused)
             return;
 
-        // only show the crosshair in game mode and in first person mode.
+        // only show the crosshair in game mode
         MWBase::WindowManager *wm = MWBase::Environment::get().getWindowManager();
-        wm->showCrosshair(!wm->isGuiMode() && (mFirstPersonView && !mVanity.enabled && !mPreviewMode));
+        wm->showCrosshair(!wm->isGuiMode() && mMode != Mode::Preview && mMode != Mode::Vanity
+                          && (mFirstPersonView || mShowCrosshairInThirdPersonMode));
 
-        if(mVanity.enabled)
-        {
+        if(mMode == Mode::Vanity)
             rotateCamera(0.f, osg::DegreesToRadians(3.f * duration), true);
+
+        updateFocalPointOffset(duration);
+
+        float speed = mTrackingPtr.getClass().getSpeed(mTrackingPtr);
+        speed /= (1.f + speed / 500.f);
+        float maxDelta = 300.f * duration;
+        mSmoothedSpeed += osg::clampBetween(speed - mSmoothedSpeed, -maxDelta, maxDelta);
+
+        mMaxNextCameraDistance = mCameraDistance + duration * (100.f + mBaseCameraDistance);
+        updateStandingPreviewMode();
+    }
+
+    void Camera::updateStandingPreviewMode()
+    {
+        if (!mStandingPreviewAllowed)
+            return;
+        float speed = mTrackingPtr.getClass().getSpeed(mTrackingPtr);
+        bool combat = mTrackingPtr.getClass().isActor() &&
+                      mTrackingPtr.getClass().getCreatureStats(mTrackingPtr).getDrawState() != MWMechanics::DrawState_Nothing;
+        bool standingStill = speed == 0 && !combat && !mFirstPersonView;
+        if (!standingStill && mMode == Mode::StandingPreview)
+        {
+            mMode = Mode::Normal;
+            calculateDeferredRotation();
         }
+        else if (standingStill && mMode == Mode::Normal)
+            mMode = Mode::StandingPreview;
+    }
+
+    void Camera::setFocalPointTargetOffset(osg::Vec2d v)
+    {
+        mFocalPointTargetOffset = v;
+        mPreviousTransitionSpeed = mFocalPointTransitionSpeed;
+        mPreviousTransitionInfluence = 1.0f;
+    }
+
+    void Camera::updateFocalPointOffset(float duration)
+    {
+        if (duration <= 0)
+            return;
+
+        if (mSkipFocalPointTransition)
+        {
+            mSkipFocalPointTransition = false;
+            mPreviousExtraOffset = osg::Vec2d();
+            mPreviousTransitionInfluence = 0.f;
+            mFocalPointCurrentOffset = mFocalPointTargetOffset;
+        }
+
+        osg::Vec2d oldOffset = mFocalPointCurrentOffset;
+
+        if (mPreviousTransitionInfluence > 0)
+        {
+            mFocalPointCurrentOffset -= mPreviousExtraOffset;
+            mPreviousExtraOffset = mPreviousExtraOffset / mPreviousTransitionInfluence + mPreviousTransitionSpeed * duration;
+            mPreviousTransitionInfluence =
+                std::max(0.f, mPreviousTransitionInfluence - duration * mFocalPointTransitionSpeedCoef);
+            mPreviousExtraOffset *= mPreviousTransitionInfluence;
+            mFocalPointCurrentOffset += mPreviousExtraOffset;
+        }
+
+        osg::Vec2d delta = mFocalPointTargetOffset - mFocalPointCurrentOffset;
+        if (delta.length2() > 0)
+        {
+            float coef = duration * (1.0 + 5.0 / delta.length()) *
+                         mFocalPointTransitionSpeedCoef * (1.0f - mPreviousTransitionInfluence);
+            mFocalPointCurrentOffset += delta * std::min(coef, 1.0f);
+        }
+        else
+        {
+            mPreviousExtraOffset = osg::Vec2d();
+            mPreviousTransitionInfluence = 0.f;
+        }
+
+        mFocalPointTransitionSpeed = (mFocalPointCurrentOffset - oldOffset) / duration;
     }
 
     void Camera::toggleViewMode(bool force)
@@ -185,53 +282,48 @@ namespace MWRender
         else
             mViewModeToggleQueued = false;
 
-        mFirstPersonView = !mFirstPersonView;
-        processViewChange();
+        if (mTrackingPtr.getClass().isActor())
+            mTrackingPtr.getClass().getCreatureStats(mTrackingPtr).setSideMovementAngle(0);
 
-        if (mFirstPersonView) {
-            mCameraDistance = 0.f;
-        } else {
-            mCameraDistance = mMaxCameraDistance;
-        }
+        mFirstPersonView = !mFirstPersonView;
+        updateStandingPreviewMode();
+        instantTransition();
+        processViewChange();
     }
-    
+
     void Camera::allowVanityMode(bool allow)
     {
-        if (!allow && mVanity.enabled)
+        if (!allow && mMode == Mode::Vanity)
+        {
+            disableDeferredPreviewRotation();
             toggleVanityMode(false);
-        mVanity.allowed = allow;
+        }
+        mVanityAllowed = allow;
     }
 
     bool Camera::toggleVanityMode(bool enable)
     {
         // Changing the view will stop all playing animations, so if we are playing
         // anything important, queue the view change for later
-        if (isFirstPerson() && !mAnimation->upperBodyReady())
+        if (mFirstPersonView && !mAnimation->upperBodyReady())
         {
             mVanityToggleQueued = true;
+            mVanityToggleQueuedValue = enable;
             return false;
         }
 
-        if(!mVanity.allowed && enable)
+        if (!mVanityAllowed && enable)
             return false;
 
-        if(mVanity.enabled == enable)
+        if ((mMode == Mode::Vanity) == enable)
             return true;
-        mVanity.enabled = enable;
+        mMode = enable ? Mode::Vanity : Mode::Normal;
+        if (!mDeferredRotationAllowed)
+            disableDeferredPreviewRotation();
+        if (!enable)
+            calculateDeferredRotation();
 
         processViewChange();
-
-        float offset = mPreviewCam.offset;
-
-        if (mVanity.enabled) {
-            setPitch(osg::DegreesToRadians(-30.f));
-            mMainCam.offset = mCameraDistance;
-        } else {
-            offset = mMainCam.offset;
-        }
-
-        mCameraDistance = offset;
-
         return true;
     }
 
@@ -240,34 +332,26 @@ namespace MWRender
         if (mFirstPersonView && !mAnimation->upperBodyReady())
             return;
 
-        if(mPreviewMode == enable)
+        if((mMode == Mode::Preview) == enable)
             return;
 
-        mPreviewMode = enable;
-        processViewChange();
-
-        float offset = mCameraDistance;
-        if (mPreviewMode) {
-            mMainCam.offset = offset;
-            offset = mPreviewCam.offset;
-        } else {
-            mPreviewCam.offset = offset;
-            offset = mMainCam.offset;
+        mMode = enable ? Mode::Preview : Mode::Normal;
+        if (mMode == Mode::Normal)
+            updateStandingPreviewMode();
+        else if (mFirstPersonView)
+            instantTransition();
+        if (mMode == Mode::Normal)
+        {
+            if (!mDeferredRotationAllowed)
+                disableDeferredPreviewRotation();
+            calculateDeferredRotation();
         }
-
-        mCameraDistance = offset;
+        processViewChange();
     }
 
     void Camera::setSneakOffset(float offset)
     {
         mAnimation->setFirstPersonOffset(osg::Vec3f(0,0,-offset));
-    }
-
-    float Camera::getYaw()
-    {
-        if(mVanity.enabled || mPreviewMode)
-            return mPreviewCam.yaw;
-        return mMainCam.yaw;
     }
 
     void Camera::setYaw(float angle)
@@ -277,92 +361,72 @@ namespace MWRender
         } else if (angle < -osg::PI) {
             angle += osg::PI*2;
         }
-        if (mVanity.enabled || mPreviewMode) {
-            mPreviewCam.yaw = angle;
-        } else {
-            mMainCam.yaw = angle;
-        }
-    }
-
-    float Camera::getPitch()
-    {
-        if (mVanity.enabled || mPreviewMode) {
-            return mPreviewCam.pitch;
-        }
-        return mMainCam.pitch;
+        mYaw = angle;
     }
 
     void Camera::setPitch(float angle)
     {
         const float epsilon = 0.000001f;
         float limit = osg::PI_2 - epsilon;
-        if(mPreviewMode)
-            limit /= 2;
-
-        if(angle > limit)
-            angle = limit;
-        else if(angle < -limit)
-            angle = -limit;
-
-        if (mVanity.enabled || mPreviewMode) {
-            mPreviewCam.pitch = angle;
-        } else {
-            mMainCam.pitch = angle;
-        }
+        mPitch = osg::clampBetween(angle, -limit, limit);
     }
 
     float Camera::getCameraDistance() const
     {
+        if (isFirstPerson())
+            return 0.f;
         return mCameraDistance;
     }
 
-    void Camera::setCameraDistance(float dist, bool adjust, bool override)
+    void Camera::updateBaseCameraDistance(float dist, bool adjust)
     {
-        if(mFirstPersonView && !mPreviewMode && !mVanity.enabled)
+        if (isFirstPerson())
             return;
 
-        mIsNearest = false;
+        if (adjust)
+            dist += std::min(mCameraDistance - getCameraDistanceCorrection(), mBaseCameraDistance);
 
+        mIsNearest = dist <= mNearest;
+        mBaseCameraDistance = osg::clampBetween(dist, mNearest, mFurthest);
+        Settings::Manager::setFloat("third person camera distance", "Camera", mBaseCameraDistance);
+        setCameraDistance();
+    }
+
+    void Camera::setCameraDistance(float dist, bool adjust)
+    {
+        if (isFirstPerson())
+            return;
         if (adjust)
             dist += mCameraDistance;
+        mCameraDistance = osg::clampBetween(dist, 10.f, mFurthest);
+    }
 
-        if (dist >= mFurthest) {
-            dist = mFurthest;
-        } else if (!override && dist < 10.f) {
-            dist = 10.f;
-        } else if (override && dist <= mNearest) {
-            dist = mNearest;
-            mIsNearest = true;
-        }
-        mCameraDistance = dist;
+    float Camera::getCameraDistanceCorrection() const
+    {
+        if (!mDynamicCameraDistanceEnabled)
+            return 0;
 
-        if (override) {
-            if (mVanity.enabled || mPreviewMode) {
-                mPreviewCam.offset = mCameraDistance;
-            } else if (!mFirstPersonView) {
-                mMaxCameraDistance = mCameraDistance;
-            }
-        } else {
-            mDistanceAdjusted = true;
-        }
+        float pitchCorrection = std::max(-getPitch(), 0.f) * 50.f;
+
+        float smoothedSpeedSqr = mSmoothedSpeed * mSmoothedSpeed;
+        float speedCorrection = smoothedSpeedSqr / (smoothedSpeedSqr + 300.f*300.f) * mZoomOutWhenMoveCoef;
+
+        return pitchCorrection + speedCorrection;
     }
 
     void Camera::setCameraDistance()
     {
-        if (mDistanceAdjusted) {
-            if (mVanity.enabled || mPreviewMode) {
-                mCameraDistance = mPreviewCam.offset;
-            } else if (!mFirstPersonView) {
-                mCameraDistance = mMaxCameraDistance;
-            }
-        }
-        mDistanceAdjusted = false;
+        mFocalPointAdjustment = osg::Vec3d();
+        if (isFirstPerson())
+            return;
+        mCameraDistance = mBaseCameraDistance + getCameraDistanceCorrection();
+        if (mDynamicCameraDistanceEnabled)
+            mCameraDistance = std::min(mCameraDistance, mMaxNextCameraDistance);
     }
 
     void Camera::setAnimation(NpcAnimation *anim)
     {
         mAnimation = anim;
-
         processViewChange();
     }
 
@@ -389,28 +453,74 @@ namespace MWRender
         rotateCamera(getPitch(), getYaw(), false);
     }
 
-    void Camera::getPosition(osg::Vec3f &focal, osg::Vec3f &camera)
+    void Camera::applyDeferredPreviewRotationToPlayer(float dt)
     {
-        focal = getFocalPoint();
+        if (isVanityOrPreviewModeEnabled() || mTrackingPtr.isEmpty())
+            return;
 
-        osg::Quat orient =  osg::Quat(getPitch(), osg::Vec3d(1,0,0)) * osg::Quat(getYaw(), osg::Vec3d(0,0,1));
+        osg::Vec3f rot = mDeferredRotation;
+        float delta = rot.normalize();
+        delta = std::min(delta, (delta + 1.f) * 3 * dt);
+        rot *= delta;
+        mDeferredRotation -= rot;
 
-        osg::Vec3d offset = orient * osg::Vec3d(0, -mCameraDistance, 0);
-        camera = focal + offset;
+        if (mDeferredRotationDisabled)
+        {
+            mDeferredRotationDisabled = delta > 0.0001;
+            rotateCameraToTrackingPtr();
+            return;
+        }
+
+        auto& movement = mTrackingPtr.getClass().getMovementSettings(mTrackingPtr);
+        movement.mRotation[0] += rot.x();
+        movement.mRotation[1] += rot.y();
+        movement.mRotation[2] += rot.z();
+        if (std::abs(mDeferredRotation.z()) > 0.0001)
+        {
+            float s = std::sin(mDeferredRotation.z());
+            float c = std::cos(mDeferredRotation.z());
+            float x = movement.mPosition[0];
+            float y = movement.mPosition[1];
+            movement.mPosition[0] = x *  c + y * s;
+            movement.mPosition[1] = x * -s + y * c;
+        }
     }
 
-    void Camera::togglePlayerLooking(bool enable)
+    void Camera::rotateCameraToTrackingPtr()
     {
-        mFreeLook = enable;
+        setPitch(-mTrackingPtr.getRefData().getPosition().rot[0] - mDeferredRotation.x());
+        setYaw(-mTrackingPtr.getRefData().getPosition().rot[2] - mDeferredRotation.z());
     }
 
-    bool Camera::isVanityOrPreviewModeEnabled()
+    void Camera::instantTransition()
     {
-        return mPreviewMode || mVanity.enabled;
+        mSkipFocalPointTransition = true;
+        mDeferredRotationDisabled = false;
+        mDeferredRotation = osg::Vec3f();
+        rotateCameraToTrackingPtr();
     }
 
-    bool Camera::isNearest()
+    void Camera::calculateDeferredRotation()
     {
-        return mIsNearest;
+        MWWorld::Ptr ptr = mTrackingPtr;
+        if (isVanityOrPreviewModeEnabled() || ptr.isEmpty())
+            return;
+        if (mFirstPersonView)
+        {
+            instantTransition();
+            return;
+        }
+
+        mDeferredRotation.x() = -ptr.getRefData().getPosition().rot[0] - mPitch;
+        mDeferredRotation.z() = -ptr.getRefData().getPosition().rot[2] - mYaw;
+        if (mDeferredRotation.x() > osg::PI)
+            mDeferredRotation.x() -= 2 * osg::PI;
+        if (mDeferredRotation.x() < -osg::PI)
+            mDeferredRotation.x() += 2 * osg::PI;
+        if (mDeferredRotation.z() > osg::PI)
+            mDeferredRotation.z() -= 2 * osg::PI;
+        if (mDeferredRotation.z() < -osg::PI)
+            mDeferredRotation.z() += 2 * osg::PI;
     }
+
 }

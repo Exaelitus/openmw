@@ -1,10 +1,11 @@
 #include "scriptmanagerimp.hpp"
 
 #include <cassert>
-#include <iostream>
 #include <sstream>
 #include <exception>
 #include <algorithm>
+
+#include <components/debug/debuglog.hpp>
 
 #include <components/esm/loadscpt.hpp>
 
@@ -18,13 +19,14 @@
 #include "../mwworld/esmstore.hpp"
 
 #include "extensions.hpp"
+#include "interpretercontext.hpp"
 
 namespace MWScript
 {
-    ScriptManager::ScriptManager (const MWWorld::ESMStore& store, bool verbose,
+    ScriptManager::ScriptManager (const MWWorld::ESMStore& store,
         Compiler::Context& compilerContext, int warningsMode,
         const std::vector<std::string>& scriptBlacklist)
-    : mErrorHandler (std::cerr), mStore (store), mVerbose (verbose),
+    : mErrorHandler(), mStore (store),
       mCompilerContext (compilerContext), mParser (mErrorHandler, mCompilerContext),
       mOpcodesInstalled (false), mGlobalScripts (store)
     {
@@ -44,8 +46,7 @@ namespace MWScript
 
         if (const ESM::Script *script = mStore.get<ESM::Script>().find (name))
         {
-            if (mVerbose)
-                std::cout << "compiling script: " << name << std::endl;
+            mErrorHandler.setContext(name);
 
             bool Success = true;
             try
@@ -66,23 +67,20 @@ namespace MWScript
             }
             catch (const std::exception& error)
             {
-                std::cerr << "An exception has been thrown: " << error.what() << std::endl;
+                Log(Debug::Error) << "Error: An exception has been thrown: " << error.what();
                 Success = false;
             }
 
             if (!Success)
             {
-                std::cerr
-                    << "compiling failed: " << name << std::endl;
-                if (mVerbose)
-                    std::cerr << script->mScriptText << std::endl << std::endl;
+                Log(Debug::Error) << "Error: script compiling failed: " << name;
             }
 
             if (Success)
             {
                 std::vector<Interpreter::Type_Code> code;
-                mParser.getCode (code);
-                mScripts.insert (std::make_pair (name, std::make_pair (code, mParser.getLocals())));
+                mParser.getCode(code);
+                mScripts.emplace(name, CompiledScript(code, mParser.getLocals()));
 
                 return true;
             }
@@ -91,7 +89,7 @@ namespace MWScript
         return false;
     }
 
-    void ScriptManager::run (const std::string& name, Interpreter::Context& interpreterContext)
+    bool ScriptManager::run (const std::string& name, Interpreter::Context& interpreterContext)
     {
         // compile script
         ScriptCollection::iterator iter = mScripts.find (name);
@@ -102,8 +100,8 @@ namespace MWScript
             {
                 // failed -> ignore script from now on.
                 std::vector<Interpreter::Type_Code> empty;
-                mScripts.insert (std::make_pair (name, std::make_pair (empty, Compiler::Locals())));
-                return;
+                mScripts.emplace(name, CompiledScript(empty, Compiler::Locals()));
+                return false;
             }
 
             iter = mScripts.find (name);
@@ -111,7 +109,7 @@ namespace MWScript
         }
 
         // execute script
-        if (!iter->second.first.empty())
+        if (!iter->second.mByteCode.empty() && iter->second.mActive)
             try
             {
                 if (!mOpcodesInstalled)
@@ -120,15 +118,30 @@ namespace MWScript
                     mOpcodesInstalled = true;
                 }
 
-                mInterpreter.run (&iter->second.first[0], iter->second.first.size(), interpreterContext);
+                mInterpreter.run (&iter->second.mByteCode[0], iter->second.mByteCode.size(), interpreterContext);
+                return true;
+            }
+            catch (const MissingImplicitRefError& e)
+            {
+                Log(Debug::Error) << "Execution of script " << name << " failed: "  << e.what();
             }
             catch (const std::exception& e)
             {
-                std::cerr << "Execution of script " << name << " failed:" << std::endl;
-                std::cerr << e.what() << std::endl;
+                Log(Debug::Error) << "Execution of script " << name << " failed: "  << e.what();
 
-                iter->second.first.clear(); // don't execute again.
+                iter->second.mActive = false; // don't execute again.
             }
+        return false;
+    }
+
+    void ScriptManager::clear()
+    {
+        for (auto& script : mScripts)
+        {
+            script.second.mActive = true;
+        }
+
+        mGlobalScripts.clear();
     }
 
     std::pair<int, int> ScriptManager::compileAll()
@@ -160,7 +173,7 @@ namespace MWScript
             ScriptCollection::iterator iter = mScripts.find (name2);
 
             if (iter!=mScripts.end())
-                return iter->second.second;
+                return iter->second.mLocals;
         }
 
         {
@@ -172,12 +185,9 @@ namespace MWScript
 
         if (const ESM::Script *script = mStore.get<ESM::Script>().search (name2))
         {
-            if (mVerbose)
-                std::cout
-                    << "scanning script for local variable declarations: " << name2
-                    << std::endl;
-
             Compiler::Locals locals;
+
+            const Compiler::ContextOverride override(mErrorHandler, name2 + "[local variables]");
 
             std::istringstream stream (script->mScriptText);
             Compiler::QuickFileParser parser (mErrorHandler, mCompilerContext, locals);

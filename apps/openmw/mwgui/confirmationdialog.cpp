@@ -3,6 +3,9 @@
 #include <MyGUI_Button.h>
 #include <MyGUI_EditBox.h>
 
+#include "../mwbase/environment.hpp"
+#include "../mwbase/windowmanager.hpp"
+
 namespace MWGui
 {
     ConfirmationDialog::ConfirmationDialog() :
@@ -16,29 +19,30 @@ namespace MWGui
         mOkButton->eventMouseButtonClick += MyGUI::newDelegate(this, &ConfirmationDialog::onOkButtonClicked);
     }
 
-    void ConfirmationDialog::askForConfirmation(const std::string& message, const std::string& confirmMessage, const std::string& cancelMessage)
+    void ConfirmationDialog::askForConfirmation(const std::string& message)
     {
         setVisible(true);
 
         mMessage->setCaptionWithReplacing(message);
 
-        mCancelButton->setCaptionWithReplacing(cancelMessage);
-        mOkButton->setCaptionWithReplacing(confirmMessage);
+        int height = mMessage->getTextSize().height + 60;
 
-        int height = mMessage->getTextSize().height + 72;
+        int width = mMessage->getTextSize().width + 24;
 
-        mMainWidget->setSize(mMainWidget->getWidth(), height);
+        mMainWidget->setSize(width, height);
 
-        mMessage->setSize(mMessage->getWidth(), mMessage->getTextSize().height+24);
+        mMessage->setSize(mMessage->getWidth(), mMessage->getTextSize().height + 24);
+
+        MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mOkButton);
 
         center();
     }
 
-    void ConfirmationDialog::exit()
+    bool ConfirmationDialog::exit()
     {
         setVisible(false);
-
         eventCancelClicked();
+        return true;
     }
 
     void ConfirmationDialog::onCancelButtonClicked(MyGUI::Widget* _sender)

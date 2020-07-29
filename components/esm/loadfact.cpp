@@ -40,7 +40,7 @@ namespace ESM
         while (esm.hasMoreSubs())
         {
             esm.getSubName();
-            switch (esm.retSubName().val)
+            switch (esm.retSubName().intval)
             {
                 case ESM::SREC_NAME:
                     mId = esm.getHString();
@@ -122,7 +122,7 @@ namespace ESM
         for (int i=0; i<10; ++i)
         {
             mData.mRankData[i].mAttribute1 = mData.mRankData[i].mAttribute2 = 0;
-            mData.mRankData[i].mSkill1 = mData.mRankData[i].mSkill2 = 0;
+            mData.mRankData[i].mPrimarySkill = mData.mRankData[i].mFavouredSkill = 0;
             mData.mRankData[i].mFactReaction = 0;
 
             mRanks[i].clear();

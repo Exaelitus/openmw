@@ -38,6 +38,7 @@ namespace MWGui
             SpellEffectParams()
                 : mNoTarget(false)
                 , mIsConstant(false)
+                , mNoMagnitude(false)
                 , mKnown(true)
                 , mEffectID(-1)
                 , mSkill(-1)
@@ -52,6 +53,7 @@ namespace MWGui
 
             bool mNoTarget; // potion effects for example have no target (target is always the player)
             bool mIsConstant; // constant effect means that duration will not be displayed
+            bool mNoMagnitude; // effect magnitude will not be displayed (e.g ingredients)
 
             bool mKnown; // is this effect known to the player? (If not, will display as a question mark instead)
 
@@ -88,7 +90,7 @@ namespace MWGui
 
         typedef std::vector<SpellEffectParams> SpellEffectList;
 
-        class MWSkill : public MyGUI::Widget
+        class MWSkill final : public MyGUI::Widget
         {
             MYGUI_RTTI_DERIVED( MWSkill )
         public:
@@ -114,7 +116,7 @@ namespace MWGui
         protected:
             virtual ~MWSkill();
 
-            virtual void initialiseOverride();
+            void initialiseOverride() final;
 
             void onClicked(MyGUI::Widget* _sender);
 
@@ -129,7 +131,7 @@ namespace MWGui
         };
         typedef MWSkill* MWSkillPtr;
 
-        class MWAttribute : public MyGUI::Widget
+        class MWAttribute final : public MyGUI::Widget
         {
             MYGUI_RTTI_DERIVED( MWAttribute )
         public:
@@ -154,7 +156,7 @@ namespace MWGui
         protected:
             virtual ~MWAttribute();
 
-            virtual void initialiseOverride();
+            void initialiseOverride() final;
 
             void onClicked(MyGUI::Widget* _sender);
 
@@ -173,7 +175,7 @@ namespace MWGui
          * @todo remove this class and use MWEffectList instead
          */
         class MWSpellEffect;
-        class MWSpell : public MyGUI::Widget
+        class MWSpell final : public MyGUI::Widget
         {
             MYGUI_RTTI_DERIVED( MWSpell )
         public:
@@ -197,7 +199,7 @@ namespace MWGui
         protected:
             virtual ~MWSpell();
 
-            virtual void initialiseOverride();
+            void initialiseOverride() final;
 
         private:
             void updateWidgets();
@@ -207,7 +209,7 @@ namespace MWGui
         };
         typedef MWSpell* MWSpellPtr;
 
-        class MWEffectList : public MyGUI::Widget
+        class MWEffectList final : public MyGUI::Widget
         {
             MYGUI_RTTI_DERIVED( MWEffectList )
         public:
@@ -218,7 +220,9 @@ namespace MWGui
             enum EffectFlags
             {
                 EF_NoTarget = 0x01, // potions have no target (target is always the player)
-                EF_Constant = 0x02 // constant effect means that duration will not be displayed
+                EF_Constant = 0x02, // constant effect means that duration will not be displayed
+                EF_NoMagnitude = 0x04 // ingredients have no magnitude
+
             };
 
             void setEffectList(const SpellEffectList& list);
@@ -237,7 +241,7 @@ namespace MWGui
         protected:
             virtual ~MWEffectList();
 
-            virtual void initialiseOverride();
+            void initialiseOverride() final;
 
         private:
             void updateWidgets();
@@ -246,7 +250,7 @@ namespace MWGui
         };
         typedef MWEffectList* MWEffectListPtr;
 
-        class MWSpellEffect : public MyGUI::Widget
+        class MWSpellEffect final : public MyGUI::Widget
         {
             MYGUI_RTTI_DERIVED( MWSpellEffect )
         public:
@@ -261,10 +265,11 @@ namespace MWGui
         protected:
             virtual ~MWSpellEffect();
 
-            virtual void initialiseOverride();
+            void initialiseOverride() final;
 
         private:
-
+            static const int sIconOffset = 24;
+            
             void updateWidgets();
 
             SpellEffectParams mEffectParams;
@@ -274,7 +279,7 @@ namespace MWGui
         };
         typedef MWSpellEffect* MWSpellEffectPtr;
 
-        class MWDynamicStat : public MyGUI::Widget
+        class MWDynamicStat final : public MyGUI::Widget
         {
             MYGUI_RTTI_DERIVED( MWDynamicStat )
         public:
@@ -289,7 +294,7 @@ namespace MWGui
         protected:
             virtual ~MWDynamicStat();
 
-            virtual void initialiseOverride();
+            void initialiseOverride() final;
 
         private:
 
@@ -299,33 +304,6 @@ namespace MWGui
             MyGUI::TextBox* mBarTextWidget;
         };
         typedef MWDynamicStat* MWDynamicStatPtr;
-
-        // Should be removed when upgrading to MyGUI 3.2.2 (current git), it has ScrollBar autorepeat support
-        class MWScrollBar : public MyGUI::ScrollBar
-        {
-            MYGUI_RTTI_DERIVED(MWScrollBar)
-
-        public:
-            MWScrollBar();
-            virtual ~MWScrollBar();
-
-            void setRepeat(float trigger, float step);
-
-        protected:
-            virtual void initialiseOverride();
-            void repeatClick(MyGUI::Widget* _widget, MyGUI::ControllerItem* _controller);
-
-            bool mEnableRepeat;
-            float mRepeatTriggerTime;
-            float mRepeatStepTime;
-            bool mIsIncreasing;
-
-        private:
-            void onDecreaseButtonPressed(MyGUI::Widget* _sender, int _left, int _top, MyGUI::MouseButton _id);
-            void onDecreaseButtonReleased(MyGUI::Widget* _sender, int _left, int _top, MyGUI::MouseButton _id);
-            void onIncreaseButtonPressed(MyGUI::Widget* _sender, int _left, int _top, MyGUI::MouseButton _id);
-            void onIncreaseButtonReleased(MyGUI::Widget* _sender, int _left, int _top, MyGUI::MouseButton _id);
-        };
     }
 }
 

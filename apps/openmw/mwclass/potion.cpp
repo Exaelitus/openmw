@@ -7,11 +7,9 @@
 #include "../mwbase/windowmanager.hpp"
 
 #include "../mwworld/ptr.hpp"
-#include "../mwworld/actiontake.hpp"
 #include "../mwworld/actionapply.hpp"
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
-#include "../mwworld/containerstore.hpp"
 #include "../mwphysics/physicssystem.hpp"
 #include "../mwworld/nullaction.hpp"
 
@@ -51,11 +49,12 @@ namespace MWClass
     std::string Potion::getName (const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::Potion> *ref = ptr.get<ESM::Potion>();
+        const std::string& name = ref->mBase->mName;
 
-        return ref->mBase->mName;
+        return !name.empty() ? name : ref->mBase->mId;
     }
 
-    boost::shared_ptr<MWWorld::Action> Potion::activate (const MWWorld::Ptr& ptr,
+    std::shared_ptr<MWWorld::Action> Potion::activate (const MWWorld::Ptr& ptr,
         const MWWorld::Ptr& actor) const
     {
         return defaultItemActivate(ptr, actor);
@@ -78,7 +77,7 @@ namespace MWClass
 
     void Potion::registerSelf()
     {
-        boost::shared_ptr<Class> instance (new Potion);
+        std::shared_ptr<Class> instance (new Potion);
 
         registerClass (typeid (ESM::Potion).name(), instance);
     }
@@ -100,19 +99,12 @@ namespace MWClass
         return ref->mBase->mIcon;
     }
 
-    bool Potion::hasToolTip (const MWWorld::ConstPtr& ptr) const
-    {
-        const MWWorld::LiveCellRef<ESM::Potion> *ref = ptr.get<ESM::Potion>();
-
-        return (ref->mBase->mName != "");
-    }
-
     MWGui::ToolTipInfo Potion::getToolTipInfo (const MWWorld::ConstPtr& ptr, int count) const
     {
         const MWWorld::LiveCellRef<ESM::Potion> *ref = ptr.get<ESM::Potion>();
 
         MWGui::ToolTipInfo info;
-        info.caption = ref->mBase->mName + MWGui::ToolTips::getCountString(count);
+        info.caption = MyGUI::TextIterator::toTagsString(getName(ptr)) + MWGui::ToolTips::getCountString(count);
         info.icon = ref->mBase->mIcon;
 
         std::string text;
@@ -122,7 +114,7 @@ namespace MWClass
 
         info.effects = MWGui::Widgets::MWEffectList::effectListFromESM(&ref->mBase->mEffects);
 
-        // hide effects the player doesnt know about
+        // hide effects the player doesn't know about
         MWWorld::Ptr player = MWBase::Environment::get().getWorld ()->getPlayerPtr();
         for (unsigned int i=0; i<info.effects.size(); ++i)
             info.effects[i].mKnown = MWMechanics::Alchemy::knownEffect(i, player);
@@ -139,12 +131,12 @@ namespace MWClass
         return info;
     }
 
-    boost::shared_ptr<MWWorld::Action> Potion::use (const MWWorld::Ptr& ptr) const
+    std::shared_ptr<MWWorld::Action> Potion::use (const MWWorld::Ptr& ptr, bool force) const
     {
         MWWorld::LiveCellRef<ESM::Potion> *ref =
             ptr.get<ESM::Potion>();
 
-        boost::shared_ptr<MWWorld::Action> action (
+        std::shared_ptr<MWWorld::Action> action (
             new MWWorld::ActionApply (ptr, ref->mBase->mId));
 
         action->setSound ("Drink");

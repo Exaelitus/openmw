@@ -31,11 +31,13 @@ void Wizard::ExistingInstallationPage::initializePage()
     // Hide the default item if there are installations to choose from
     installationsList->item(0)->setHidden(!paths.isEmpty());
 
-    foreach (const QString &path, paths) {
-        QListWidgetItem *item = new QListWidgetItem(path);
-
+    for (const QString &path : paths)
+    {
         if (installationsList->findItems(path, Qt::MatchExactly).isEmpty())
+        {
+            QListWidgetItem *item = new QListWidgetItem(path);
             installationsList->addItem(item);
+        }
     }
 
     connect(installationsList, SIGNAL(currentTextChanged(QString)),
@@ -63,13 +65,13 @@ bool Wizard::ExistingInstallationPage::validatePage()
                                    The Wizard needs to update settings in this file.<br><br> \
                                    Press \"Browse...\" to specify the location manually.<br>"));
 
-        QAbstractButton *browseButton =
+        QAbstractButton *browseButton2 =
                 msgBox.addButton(QObject::tr("B&rowse..."), QMessageBox::ActionRole);
 
         msgBox.exec();
 
         QString iniFile;
-        if (msgBox.clickedButton() == browseButton) {
+        if (msgBox.clickedButton() == browseButton2) {
             iniFile = QFileDialog::getOpenFileName(
                         this,
                         QObject::tr("Select configuration file"),
@@ -96,7 +98,7 @@ void Wizard::ExistingInstallationPage::on_browseButton_clicked()
                 tr("Select master file"),
                 QDir::currentPath(),
                 QString(tr("Morrowind master file (*.esm)")),
-                NULL,
+                nullptr,
                 QFileDialog::DontResolveSymlinks);
 
     if (selectedFile.isEmpty())

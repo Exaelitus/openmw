@@ -6,13 +6,14 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
+
 #include "../mwworld/ptr.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+
 #include "spells.hpp"
 #include "creaturestats.hpp"
 #include "actorutil.hpp"
-
 
 namespace MWMechanics
 {
@@ -27,7 +28,7 @@ namespace MWMechanics
 
         float fDiseaseXferChance =
                 MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find(
-                    "fDiseaseXferChance")->getFloat();
+                    "fDiseaseXferChance")->mValue.getFloat();
 
         MagicEffects& actorEffects = actor.getClass().getCreatureStats(actor).getMagicEffects();
 
@@ -39,7 +40,7 @@ namespace MWMechanics
                 continue;
 
             float resist = 0.f;
-            if (spells.hasCorprusEffect(spell))
+            if (Spells::hasCorprusEffect(spell))
                 resist = 1.f - 0.01f * (actorEffects.get(ESM::MagicEffect::ResistCorprusDisease).getMagnitude()
                                         - actorEffects.get(ESM::MagicEffect::WeaknessToCorprusDisease).getMagnitude());
             else if (spell->mData.mType == ESM::Spell::ST_Disease)
@@ -56,11 +57,11 @@ namespace MWMechanics
             {
                 // Contracted disease!
                 actor.getClass().getCreatureStats(actor).getSpells().add(it->first);
+                MWBase::Environment::get().getWorld()->applyLoopingParticles(actor);
 
                 std::string msg = "sMagicContractDisease";
-                msg = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find(msg)->getString();
-                if (msg.find("%s") != std::string::npos)
-                    msg.replace(msg.find("%s"), 2, spell->mName);
+                msg = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find(msg)->mValue.getString();
+                msg = Misc::StringUtils::format(msg, spell->mName);
                 MWBase::Environment::get().getWindowManager()->messageBox(msg);
             }
         }

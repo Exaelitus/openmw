@@ -9,12 +9,17 @@
 
 #include <stack>
 
+#include <osg/ref_ptr>
+
 #include "../mwbase/windowmanager.hpp"
 
+#include <components/sdlutil/events.hpp>
 #include <components/settings/settings.hpp>
 #include <components/to_utf8/to_utf8.hpp>
 
 #include "mapwindow.hpp"
+#include "statswatcher.hpp"
+#include "textcolours.hpp"
 
 #include <MyGUI_KeyCode.h>
 #include <MyGUI_Types.h>
@@ -57,9 +62,15 @@ namespace Resource
     class ResourceSystem;
 }
 
+namespace SceneUtil
+{
+    class WorkQueue;
+}
+
 namespace SDLUtil
 {
     class SDLCursorManager;
+    class VideoWrapper;
 }
 
 namespace osgMyGUI
@@ -112,23 +123,25 @@ namespace MWGui
   class ScreenFader;
   class DebugWindow;
   class JailScreen;
+  class KeyboardNavigation;
 
-  class WindowManager : public MWBase::WindowManager
+  class WindowManager :
+      public MWBase::WindowManager
   {
   public:
     typedef std::pair<std::string, int> Faction;
     typedef std::vector<Faction> FactionList;
 
-    WindowManager(osgViewer::Viewer* viewer, osg::Group* guiRoot, Resource::ResourceSystem* resourceSystem,
-                  const std::string& logpath, const std::string& cacheDir, bool consoleOnlyScripts,
-                  Translation::Storage& translationDataStorage, ToUTF8::FromType encoding, bool exportFonts, const std::map<std::string,std::string>& fallbackMap, const std::string& versionDescription);
+    WindowManager(SDL_Window* window, osgViewer::Viewer* viewer, osg::Group* guiRoot, Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue,
+                  const std::string& logpath, const std::string& cacheDir, bool consoleOnlyScripts, Translation::Storage& translationDataStorage,
+                  ToUTF8::FromType encoding, bool exportFonts, const std::string& versionDescription, const std::string& localPath);
     virtual ~WindowManager();
 
     /// Set the ESMStore to use for retrieving of GUI-related strings.
     void setStore (const MWWorld::ESMStore& store);
 
     void initUI();
-    void renderWorldMap();
+    virtual void loadUserFonts();
 
     virtual Loading::Listener* getLoadingScreen();
 
@@ -136,21 +149,15 @@ namespace MWGui
     /// (and will continually update the window while doing so)
     virtual void playVideo(const std::string& name, bool allowSkipping);
 
-    /**
-     * Should be called each frame to update windows/gui elements.
-     * This could mean updating sizes of gui elements or opening
-     * new dialogs.
-     */
-    virtual void update();
-
     /// Warning: do not use MyGUI::InputManager::setKeyFocusWidget directly. Instead use this.
     virtual void setKeyFocusWidget (MyGUI::Widget* widget);
 
     virtual void setNewGame(bool newgame);
 
-    virtual void pushGuiMode(GuiMode mode);
-    virtual void popGuiMode();
-    virtual void removeGuiMode(GuiMode mode); ///< can be anywhere in the stack
+    virtual void pushGuiMode(GuiMode mode, const MWWorld::Ptr& arg);
+    virtual void pushGuiMode (GuiMode mode);
+    virtual void popGuiMode(bool noSound=false);
+    virtual void removeGuiMode(GuiMode mode, bool noSound=false); ///< can be anywhere in the stack
 
     virtual void goToJail(int days);
 
@@ -175,34 +182,22 @@ namespace MWGui
     virtual bool isAllowed(GuiWindow wnd) const;
 
     /// \todo investigate, if we really need to expose every single lousy UI element to the outside world
-    virtual MWGui::DialogueWindow* getDialogueWindow();
     virtual MWGui::InventoryWindow* getInventoryWindow();
     virtual MWGui::CountDialog* getCountDialog();
     virtual MWGui::ConfirmationDialog* getConfirmationDialog();
     virtual MWGui::TradeWindow* getTradeWindow();
 
     /// Make the player use an item, while updating GUI state accordingly
-    virtual void useItem(const MWWorld::Ptr& item);
+    virtual void useItem(const MWWorld::Ptr& item, bool bypassBeastRestrictions=false);
 
     virtual void updateSpellWindow();
 
     virtual void setConsoleSelectedObject(const MWWorld::Ptr& object);
 
-    ///< Set value for the given ID.
-    virtual void setValue (const std::string& id, const MWMechanics::AttributeValue& value);
-    virtual void setValue (int parSkill, const MWMechanics::SkillValue& value);
-    virtual void setValue (const std::string& id, const MWMechanics::DynamicStat<float>& value);
-    virtual void setValue (const std::string& id, const std::string& value);
-    virtual void setValue (const std::string& id, int value);
-
     /// Set time left for the player to start drowning (update the drowning bar)
     /// @param time time left to start drowning
     /// @param maxTime how long we can be underwater (in total) until drowning starts
     virtual void setDrowningTimeLeft (float time, float maxTime);
-
-    virtual void setPlayerClass (const ESM::Class &class_);                        ///< set current class of player
-    virtual void configureSkills (const SkillList& major, const SkillList& minor); ///< configure skill groups, each set contains the skill ID for that group.
-    virtual void updateSkillArea();                                                ///< update display of skills, factions, birth sign, reputation and bounty
 
     virtual void changeCell(const MWWorld::CellStore* cell); ///< change the active cell
 
@@ -232,20 +227,28 @@ namespace MWGui
     virtual void setSpellVisibility(bool visible);
     virtual void setSneakVisibility(bool visible);
 
-    virtual void activateQuickKey  (int index);
+    /// activate selected quick key
+    virtual void activateQuickKey (int index);
+    /// update activated quick key state (if action executing was delayed for some reason)
+    virtual void updateActivatedQuickKey ();
 
     virtual std::string getSelectedSpell() { return mSelectedSpell; }
     virtual void setSelectedSpell(const std::string& spellId, int successChancePercent);
     virtual void setSelectedEnchantItem(const MWWorld::Ptr& item);
+    virtual const MWWorld::Ptr& getSelectedEnchantItem() const;
     virtual void setSelectedWeapon(const MWWorld::Ptr& item);
+    virtual const MWWorld::Ptr& getSelectedWeapon() const;
+    virtual int getFontHeight() const;
     virtual void unsetSelectedSpell();
     virtual void unsetSelectedWeapon();
+
+    virtual void updateConsoleObjectPtr(const MWWorld::Ptr& currentPtr, const MWWorld::Ptr& newPtr);
 
     virtual void showCrosshair(bool show);
     virtual bool getSubtitlesEnabled();
 
-    /// Turn visibility of *all* GUI elements on or off (HUD and all windows, except the console)
-    virtual bool toggleGui();
+    /// Turn visibility of HUD on or off
+    virtual bool toggleHud();
 
     virtual void disallowMouse();
     virtual void allowMouse();
@@ -267,13 +270,7 @@ namespace MWGui
 
     virtual int readPressedButton (); ///< returns the index of the pressed button or -1 if no button was pressed (->MessageBoxmanager->InteractiveMessageBox)
 
-    virtual void onFrame (float frameDuration);
-
-    /// \todo get rid of this stuff. Move it to the respective UI element classes, if needed.
-    virtual std::map<int, MWMechanics::SkillValue > getPlayerSkillValues();
-    virtual std::map<int, MWMechanics::AttributeValue > getPlayerAttributeValues();
-    virtual SkillList getPlayerMinorSkills();
-    virtual SkillList getPlayerMajorSkills();
+    virtual void update (float duration);
 
     /**
      * Fetches a GMST string from the store, if there is no setting with the given
@@ -286,7 +283,13 @@ namespace MWGui
 
     virtual void processChangedSettings(const Settings::CategorySettingVector& changed);
 
+    virtual void windowVisibilityChange(bool visible);
     virtual void windowResized(int x, int y);
+    virtual void windowClosed();
+    virtual bool isWindowVisible();
+
+    virtual void watchActor(const MWWorld::Ptr& ptr);
+    virtual MWWorld::Ptr getWatchedActor() const;
 
     virtual void executeInConsole (const std::string& path);
 
@@ -300,32 +303,22 @@ namespace MWGui
 
     virtual void updatePlayer();
 
-    virtual void showCompanionWindow(MWWorld::Ptr actor);
-    virtual void startSpellMaking(MWWorld::Ptr actor);
-    virtual void startEnchanting(MWWorld::Ptr actor);
-    virtual void startSelfEnchanting(MWWorld::Ptr soulgem);
-    virtual void startTraining(MWWorld::Ptr actor);
-    virtual void startRepair(MWWorld::Ptr actor);
-    virtual void startRepairItem(MWWorld::Ptr item);
-    virtual void startRecharge(MWWorld::Ptr soulgem);
-    virtual void startTravel(const MWWorld::Ptr& actor);
-    virtual void startSpellBuying(const MWWorld::Ptr &actor);
-    virtual void startTrade(const MWWorld::Ptr &actor);
-    virtual void openContainer(const MWWorld::Ptr &container, bool loot);
-    virtual void showBook(const MWWorld::Ptr& item, bool showTakeButton);
-    virtual void showScroll(const MWWorld::Ptr& item, bool showTakeButton);
-
     virtual void showSoulgemDialog (MWWorld::Ptr item);
 
     virtual void changePointer (const std::string& name);
 
     virtual void setEnemy (const MWWorld::Ptr& enemy);
 
+    virtual int getMessagesCount() const;
+
     virtual const Translation::Storage& getTranslationDataStorage() const;
 
     void onSoulgemDialogButtonPressed (int button);
 
     virtual bool getCursorVisible();
+
+    /// Call when mouse cursor or buttons are used.
+    virtual void setCursorActive(bool active);
 
     /// Clear all savegame-specific data
     virtual void clear();
@@ -342,7 +335,7 @@ namespace MWGui
 
     /// Sets the current Modal
     /** Used to send exit command to active Modal when Esc is pressed **/
-    virtual void addCurrentModal(WindowModal* input) {mCurrentModals.push(input);}
+    virtual void addCurrentModal(WindowModal* input);
 
     /// Removes the top Modal
     /** Used when one Modal adds another Modal
@@ -350,19 +343,21 @@ namespace MWGui
     virtual void removeCurrentModal(WindowModal* input);
 
     virtual void pinWindow (MWGui::GuiWindow window);
+    virtual void toggleMaximized(Layout *layout);
 
     /// Fade the screen in, over \a time seconds
-    virtual void fadeScreenIn(const float time, bool clearQueue);
+    virtual void fadeScreenIn(const float time, bool clearQueue, float delay);
     /// Fade the screen out to black, over \a time seconds
-    virtual void fadeScreenOut(const float time, bool clearQueue);
+    virtual void fadeScreenOut(const float time, bool clearQueue, float delay);
     /// Fade the screen to a specified percentage of black, over \a time seconds
-    virtual void fadeScreenTo(const int percent, const float time, bool clearQueue);
+    virtual void fadeScreenTo(const int percent, const float time, bool clearQueue, float delay);
     /// Darken the screen to a specified percentage
     virtual void setBlindness(const int percent);
 
     virtual void activateHitOverlay(bool interrupt);
     virtual void setWerewolfOverlay(bool set);
 
+    virtual void toggleConsole();
     virtual void toggleDebugWindow();
 
     /// Cycle to next or previous spell
@@ -370,23 +365,35 @@ namespace MWGui
     /// Cycle to next or previous weapon
     virtual void cycleWeapon(bool next);
 
+    virtual void playSound(const std::string& soundId, float volume = 1.f, float pitch = 1.f);
+
     // In WindowManager for now since there isn't a VFS singleton
     virtual std::string correctIconPath(const std::string& path);
-    virtual std::string correctBookartPath(const std::string& path, int width, int height);
+    virtual std::string correctBookartPath(const std::string& path, int width, int height, bool* exists = nullptr);
     virtual std::string correctTexturePath(const std::string& path);
     virtual bool textureExists(const std::string& path);
 
+    void addCell(MWWorld::CellStore* cell);
     void removeCell(MWWorld::CellStore* cell);
     void writeFog(MWWorld::CellStore* cell);
 
+    virtual const MWGui::TextColours& getTextColours();
+
+    virtual bool injectKeyPress(MyGUI::KeyCode key, unsigned int text, bool repeat=false);
+    virtual bool injectKeyRelease(MyGUI::KeyCode key);
+
   private:
+    unsigned int mOldUpdateMask; unsigned int mOldCullMask;
+
     const MWWorld::ESMStore* mStore;
     Resource::ResourceSystem* mResourceSystem;
+    osg::ref_ptr<SceneUtil::WorkQueue> mWorkQueue;
 
     osgMyGUI::Platform* mGuiPlatform;
     osgViewer::Viewer* mViewer;
 
-    std::auto_ptr<Gui::FontLoader> mFontLoader;
+    std::unique_ptr<Gui::FontLoader> mFontLoader;
+    std::unique_ptr<StatsWatcher> mStatsWatcher;
 
     bool mConsoleOnlyScripts;
 
@@ -395,8 +402,10 @@ namespace MWGui
     void onWindowChangeCoord(MyGUI::Window* _sender);
 
     std::string mSelectedSpell;
+    MWWorld::Ptr mSelectedEnchantItem;
+    MWWorld::Ptr mSelectedWeapon;
 
-    std::stack<WindowModal*> mCurrentModals;
+    std::vector<WindowModal*> mCurrentModals;
 
     // Markers placed manually by the player. Must be shared between both map views (the HUD map and the map window).
     CustomMarkerCollection mCustomMarkers;
@@ -404,38 +413,24 @@ namespace MWGui
     HUD *mHud;
     MapWindow *mMap;
     MWRender::LocalMap* mLocalMapRender;
-    MainMenu *mMenu;
     ToolTips *mToolTips;
     StatsWindow *mStatsWindow;
     MessageBoxManager *mMessageBoxManager;
     Console *mConsole;
-    JournalWindow* mJournal;
     DialogueWindow *mDialogueWindow;
-    ContainerWindow *mContainerWindow;
     DragAndDrop* mDragAndDrop;
     InventoryWindow *mInventoryWindow;
     ScrollWindow* mScrollWindow;
     BookWindow* mBookWindow;
     CountDialog* mCountDialog;
     TradeWindow* mTradeWindow;
-    SpellBuyingWindow* mSpellBuyingWindow;
-    TravelWindow* mTravelWindow;
     SettingsWindow* mSettingsWindow;
     ConfirmationDialog* mConfirmationDialog;
-    AlchemyWindow* mAlchemyWindow;
     SpellWindow* mSpellWindow;
     QuickKeysMenu* mQuickKeysMenu;
     LoadingScreen* mLoadingScreen;
-    LevelupDialog* mLevelupDialog;
     WaitDialog* mWaitDialog;
-    SpellCreationDialog* mSpellCreationDialog;
-    EnchantingDialog* mEnchantingDialog;
-    TrainingWindow* mTrainingWindow;
-    MerchantRepair* mMerchantRepair;
     SoulgemDialog* mSoulgemDialog;
-    Repair* mRepair;
-    Recharge* mRecharge;
-    CompanionWindow* mCompanionWindow;
     MyGUI::ImageBox* mVideoBackground;
     VideoWidget* mVideoWidget;
     ScreenFader* mWerewolfFader;
@@ -444,6 +439,8 @@ namespace MWGui
     ScreenFader* mScreenFader;
     DebugWindow* mDebugWindow;
     JailScreen* mJailScreen;
+
+    std::vector<WindowBase*> mWindows;
 
     Translation::Storage& mTranslationDataStorage;
 
@@ -456,20 +453,35 @@ namespace MWGui
     bool mHitFaderEnabled;
     bool mWerewolfOverlayEnabled;
     bool mHudEnabled;
-    bool mGuiEnabled;
     bool mCursorVisible;
+    bool mCursorActive;
+
+    int mPlayerBounty;
 
     void setCursorVisible(bool visible);
 
-    /// \todo get rid of this stuff. Move it to the respective UI element classes, if needed.
-    // Various stats about player as needed by window manager
-    std::string mPlayerName;
-    std::string mPlayerRaceId;
-    std::map<int, MWMechanics::AttributeValue > mPlayerAttributes;
-    SkillList mPlayerMajorSkills, mPlayerMinorSkills;
-    std::map<int, MWMechanics::SkillValue > mPlayerSkillValues;
-
     MyGUI::Gui *mGui; // Gui
+
+    struct GuiModeState
+    {
+        GuiModeState(WindowBase* window)
+        {
+            mWindows.push_back(window);
+        }
+        GuiModeState(const std::vector<WindowBase*>& windows)
+            : mWindows(windows) {}
+        GuiModeState() {}
+
+        void update(bool visible);
+
+        std::vector<WindowBase*> mWindows;
+
+        std::string mCloseSound;
+        std::string mOpenSound;
+    };
+    // Defines the windows that should be shown in a particular GUI mode.
+    std::map<GuiMode, GuiModeState> mGuiModeStates;
+    // The currently active stack of GUI modes (top mode is the one we are in).
     std::vector<GuiMode> mGuiModes;
 
     SDLUtil::SDLCursorManager* mCursorManager;
@@ -493,11 +505,19 @@ namespace MWGui
 
     void updateMap();
 
-    std::map<std::string, std::string> mFallbackMap;
-    
     int mShowOwned;
 
+    ToUTF8::FromType mEncoding;
+
     std::string mVersionDescription;
+
+    bool mWindowVisible;
+
+    MWGui::TextColours mTextColours;
+
+    std::unique_ptr<KeyboardNavigation> mKeyboardNavigation;
+
+    SDLUtil::VideoWrapper* mVideoWrapper;
 
     /**
      * Called when MyGUI tries to retrieve a tag's value. Tags must be denoted in #{tag} notation and will be replaced upon setting a user visible text/property.
@@ -526,6 +546,10 @@ namespace MWGui
     void createTextures();
     void createCursors();
     void setMenuTransparency(float value);
+
+    void updatePinnedWindows();
+
+    void enableScene(bool enable);
   };
 }
 

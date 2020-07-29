@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <MyGUI type="Layout">
-    <Widget type="Window" skin="MW_Dialog" layer="Windows" position="0 0 362 310" name="_Main">
+    <Widget type="Window" skin="MW_DialogNoTransp" layer="Windows" position="0 0 362 310" align="Center" name="_Main">
 
         <Widget type="ImageBox" skin="ImageBox" position="8 12 16 16" name="EffectImage">
         </Widget>
@@ -37,7 +37,7 @@
                 <Property key="TextAlign" value="Center"/>
                 <Property key="Caption" value="0"/>
             </Widget>
-            <Widget type="MWScrollBar" skin="MW_HScroll" position="122 20 210 13" name="MagnitudeMinSlider">
+            <Widget type="ScrollBar" skin="MW_HScroll" position="122 20 210 13" name="MagnitudeMinSlider">
                 <Property key="Range" value="100"/>
                 <Property key="Page" value="1"/>
             </Widget>
@@ -46,7 +46,7 @@
                 <Property key="TextAlign" value="Center"/>
                 <Property key="Caption" value="0"/>
             </Widget>
-            <Widget type="MWScrollBar" skin="MW_HScroll" position="122 52 210 13" name="MagnitudeMaxSlider">
+            <Widget type="ScrollBar" skin="MW_HScroll" position="122 52 210 13" name="MagnitudeMaxSlider">
                 <Property key="Range" value="100"/>
                 <Property key="Page" value="1"/>
             </Widget>
@@ -67,7 +67,7 @@
                 <Property key="TextAlign" value="Center"/>
                 <Property key="Caption" value="0"/>
             </Widget>
-            <Widget type="MWScrollBar" skin="MW_HScroll" position="122 20 210 13" name="DurationSlider">
+            <Widget type="ScrollBar" skin="MW_HScroll" position="122 20 210 13" name="DurationSlider">
                 <Property key="Range" value="1440"/>
                 <Property key="Page" value="1"/>
             </Widget>
@@ -87,16 +87,14 @@
                 <Property key="TextAlign" value="Center"/>
                 <Property key="Caption" value="0"/>
             </Widget>
-            <Widget type="MWScrollBar" skin="MW_HScroll" position="122 20 210 13" name="AreaSlider">
+            <Widget type="ScrollBar" skin="MW_HScroll" position="122 20 210 13" name="AreaSlider">
                 <Property key="Range" value="51"/>
                 <Property key="Page" value="1"/>
             </Widget>
         </Widget>
 
         <Widget type="HBox" position="8 266 336 24">
-            <Widget type="Widget">
-                <UserString key="HStretch" value="true"/>
-            </Widget>
+            <Widget type="Spacer"/>
 
             <Widget type="AutoSizedButton" skin="MW_Button" name="DeleteButton">
                 <Property key="Caption" value="#{sDelete}"/>

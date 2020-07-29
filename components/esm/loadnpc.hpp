@@ -43,10 +43,12 @@ struct NPC
       Misc          = 0x00400,
       Potions       = 0x02000,
 
+      AllItems = Weapon|Armor|Clothing|Books|Ingredients|Picks|Probes|Lights|Apparatus|RepairItem|Misc|Potions,
+
       // Other services
       Spells        = 0x00800,
       MagicItems    = 0x01000,
-      Training      = 0x04000, // What skills?
+      Training      = 0x04000,
       Spellmaking   = 0x08000,
       Enchanting    = 0x10000,
       Repair        = 0x20000
@@ -54,12 +56,11 @@ struct NPC
 
   enum Flags
     {
-      Female        = 0x0001,
-      Essential     = 0x0002,
-      Respawn       = 0x0004,
-      Autocalc      = 0x0010,
-      Skeleton      = 0x0400, // Skeleton blood effect (white)
-      Metal         = 0x0800  // Metal blood effect (golden?)
+      Female        = 0x01,
+      Essential     = 0x02,
+      Respawn       = 0x04,
+      Base          = 0x08,
+      Autocalc      = 0x10
     };
 
   enum NpcType
@@ -86,30 +87,34 @@ struct NPC
         // mSkill can grow up to 200, it must be unsigned
         unsigned char mSkills[Skill::Length];
 
-        char mFactionID;
+        char mUnknown1;
         unsigned short mHealth, mMana, mFatigue;
-        signed char mDisposition, mReputation, mRank;
-        char mUnknown;
+        unsigned char mDisposition, mReputation, mRank;
+        char mUnknown2;
         int mGold;
     }; // 52 bytes
 
+    //Structure for autocalculated characters.
+    // This is only used for load and save operations.
     struct NPDTstruct12
     {
         short mLevel;
         // see above
-        signed char mDisposition, mReputation, mRank;
+        unsigned char mDisposition, mReputation, mRank;
         char mUnknown1, mUnknown2, mUnknown3;
         int mGold;
     }; // 12 bytes
     #pragma pack(pop)
 
     unsigned char mNpdtType;
-    NPDTstruct52 mNpdt52;
-    NPDTstruct12 mNpdt12; //for autocalculated characters
+    //Worth noting when saving the struct:
+    // Although we might read a NPDTstruct12 in, we use NPDTstruct52 internally
+    NPDTstruct52 mNpdt;
 
     int getFactionRank() const; /// wrapper for mNpdt*, -1 = no rank
 
-    int mFlags;
+    int mBloodType;
+    unsigned char mFlags;
 
     bool mPersistent;
 
@@ -117,7 +122,6 @@ struct NPC
     SpellList mSpells;
 
     AIData mAiData;
-    bool mHasAI;
 
     Transport mTransport;
 
@@ -139,6 +143,9 @@ struct NPC
 
     void blank();
     ///< Set record to default state (does not touch the ID).
+
+    /// Resets the mNpdt object
+    void blankNpdt();
 };
 }
 #endif

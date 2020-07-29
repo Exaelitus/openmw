@@ -5,8 +5,8 @@
 
 #include <stdexcept>
 #include <vector>
-#include <iostream>
 
+#include <components/debug/debuglog.hpp>
 #include <components/files/constrainedfilestream.hpp>
 
 #include "record.hpp"
@@ -14,14 +14,39 @@
 namespace Nif
 {
 
-class NIFFile
+struct File
 {
-    enum NIFVersion {
-        VER_MW    = 0x04000002    // Morrowind NIFs
-    };
+    virtual ~File() = default;
 
-    /// Nif file version
-    unsigned int ver;
+    virtual Record *getRecord(size_t index) const = 0;
+
+    virtual size_t numRecords() const = 0;
+
+    virtual Record *getRoot(size_t index = 0) const = 0;
+
+    virtual size_t numRoots() const = 0;
+
+    virtual std::string getString(uint32_t index) const = 0;
+
+    virtual void setUseSkinning(bool skinning) = 0;
+
+    virtual bool getUseSkinning() const = 0;
+
+    virtual std::string getFilename() const = 0;
+
+    virtual unsigned int getVersion() const = 0;
+
+    virtual unsigned int getUserVersion() const = 0;
+
+    virtual unsigned int getBethVersion() const = 0;
+};
+
+class NIFFile final : public File
+{
+    /// File version, user version, Bethesda version
+    unsigned int ver = 0;
+    unsigned int userVer = 0;
+    unsigned int bethVer = 0;
 
     /// File name, used for error messages and opening the file
     std::string filename;
@@ -32,7 +57,10 @@ class NIFFile
     /// Root list.  This is a select portion of the pointers from records
     std::vector<Record*> roots;
 
-    bool mUseSkinning;
+    /// String table
+    std::vector<std::string> strings;
+
+    bool mUseSkinning = false;
 
     /// Parse the file
     void parse(Files::IStreamPtr stream);
@@ -47,18 +75,31 @@ class NIFFile
     void operator = (NIFFile const &);
 
 public:
+    // For generic versions NIFStream::generateVersion() is used instead
+    enum NIFVersion
+    {
+        VER_MW         = 0x04000002,    // 4.0.0.2. Main Morrowind NIF version.
+        VER_OB_OLD     = 0x0A000102,    // 10.0.1.2. Main older Oblivion NIF version.
+        VER_OB         = 0x14000005,    // 20.0.0.5. Main Oblivion NIF version.
+        VER_BGS        = 0x14020007     // 20.2.0.7. Main Fallout 3/4/76/New Vegas and Skyrim/SkyrimSE NIF version.
+    };
+    enum BethVersion
+    {
+        BETHVER_FO3      = 34,          // Fallout 3
+        BETHVER_FO4      = 130          // Fallout 4
+    };
+
     /// Used if file parsing fails
-    void fail(const std::string &msg)
+    void fail(const std::string &msg) const
     {
         std::string err = " NIFFile Error: " + msg;
         err += "\nFile: " + filename;
         throw std::runtime_error(err);
     }
     /// Used when something goes wrong, but not catastrophically so
-    void warn(const std::string &msg)
+    void warn(const std::string &msg) const
     {
-        std::cerr << " NIFFile Warning: " << msg <<std::endl
-                  << "File: " << filename <<std::endl;
+        Log(Debug::Warning) << " NIFFile Warning: " << msg << "\nFile: " << filename;
     }
 
     /// Open a NIF stream. The name is used for error messages.
@@ -66,33 +107,50 @@ public:
     ~NIFFile();
 
     /// Get a given record
-    Record *getRecord(size_t index) const
+    Record *getRecord(size_t index) const override
     {
         Record *res = records.at(index);
         return res;
     }
     /// Number of records
-    size_t numRecords() const { return records.size(); }
+    size_t numRecords() const override { return records.size(); }
 
     /// Get a given root
-    Record *getRoot(size_t index=0) const
+    Record *getRoot(size_t index=0) const override
     {
         Record *res = roots.at(index);
         return res;
     }
     /// Number of roots
-    size_t numRoots() const { return roots.size(); }
+    size_t numRoots() const override { return roots.size(); }
+
+    /// Get a given string from the file's string table
+    std::string getString(uint32_t index) const override
+    {
+        if (index == std::numeric_limits<uint32_t>::max())
+            return std::string();
+        return strings.at(index);
+    }
 
     /// Set whether there is skinning contained in this NIF file.
     /// @note This is just a hint for users of the NIF file and has no effect on the loading procedure.
-    void setUseSkinning(bool skinning);
+    void setUseSkinning(bool skinning) override;
 
-    bool getUseSkinning() const;
+    bool getUseSkinning() const override;
 
     /// Get the name of the file
-    std::string getFilename(){ return filename; }
+    std::string getFilename() const override { return filename; }
+
+    /// Get the version of the NIF format used
+    unsigned int getVersion() const override { return ver; }
+
+    /// Get the user version of the NIF format used
+    unsigned int getUserVersion() const override { return userVer; }
+
+    /// Get the Bethesda version of the NIF format used
+    unsigned int getBethVersion() const override { return bethVer; }
 };
-typedef boost::shared_ptr<Nif::NIFFile> NIFFilePtr;
+using NIFFilePtr = std::shared_ptr<const Nif::NIFFile>;
 
 
 

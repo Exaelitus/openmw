@@ -22,7 +22,7 @@ namespace MWGui
         QuickKeysMenu();
         ~QuickKeysMenu();
 
-        virtual void exit();
+        void onResChange(int, int) { center(); }
 
         void onItemButtonClicked(MyGUI::Widget* sender);
         void onMagicButtonClicked(MyGUI::Widget* sender);
@@ -34,8 +34,10 @@ namespace MWGui
         void onAssignMagicItem (MWWorld::Ptr item);
         void onAssignMagic (const std::string& spellId);
         void onAssignMagicCancel ();
+        void onOpen();
 
         void activateQuickKey(int index);
+        void updateActivatedQuickKey();
 
         /// @note This enum is serialized, so don't move the items around!
         enum QuickKeyType
@@ -53,30 +55,37 @@ namespace MWGui
 
 
     private:
+
+        struct keyData {
+            int index;
+            ItemWidget* button;
+            QuickKeysMenu::QuickKeyType type;
+            std::string id;
+            std::string name;
+            keyData(): index(-1), button(nullptr), type(Type_Unassigned), id(""), name("") {}
+        };
+
+        std::vector<keyData> mKey;
+        keyData* mSelected;
+        keyData* mActivated;
+
         MyGUI::EditBox* mInstructionLabel;
         MyGUI::Button* mOkButton;
-
-        std::vector<ItemWidget*> mQuickKeyButtons;
-        std::vector<QuickKeyType> mAssigned;
 
         QuickKeysMenuAssign* mAssignDialog;
         ItemSelectionDialog* mItemSelectionDialog;
         MagicSelectionDialog* mMagicSelectionDialog;
 
-        int mSelectedIndex;
-
-
         void onQuickKeyButtonClicked(MyGUI::Widget* sender);
         void onOkButtonClicked(MyGUI::Widget* sender);
 
-        void unassign(ItemWidget* key, int index);
+        void unassign(keyData* key);
     };
 
     class QuickKeysMenuAssign : public WindowModal
     {
     public:
         QuickKeysMenuAssign(QuickKeysMenu* parent);
-        virtual void exit();
 
     private:
         MyGUI::TextBox* mLabel;
@@ -93,8 +102,8 @@ namespace MWGui
     public:
         MagicSelectionDialog(QuickKeysMenu* parent);
 
-        virtual void open();
-        virtual void exit();
+        virtual void onOpen();
+        virtual bool exit();
 
     private:
         MyGUI::Button* mCancelButton;

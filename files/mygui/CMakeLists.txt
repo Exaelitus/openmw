@@ -1,6 +1,10 @@
+if (NOT DEFINED OPENMW_MYGUI_FILES_ROOT)
+    return()
+endif()
+
 # Copy resource files into the build directory
 set(SDIR ${CMAKE_CURRENT_SOURCE_DIR})
-set(DDIR ${OpenMW_BINARY_DIR}/resources/mygui)
+set(DDIRRELATIVE resources/mygui)
 
 set(MYGUI_FILES
     core.skin
@@ -34,6 +38,7 @@ set(MYGUI_FILES
     openmw_hud.layout
     openmw_infobox.layout
     openmw_interactive_messagebox.layout
+    openmw_interactive_messagebox_notransp.layout
     openmw_inventory_window.layout
     openmw_journal.layout
     openmw_journal.skin.xml
@@ -92,4 +97,4 @@ set(MYGUI_FILES
 )
 
 
-copy_all_files(${CMAKE_CURRENT_SOURCE_DIR} ${DDIR} "${MYGUI_FILES}")
+copy_all_resource_files(${CMAKE_CURRENT_SOURCE_DIR} ${OPENMW_MYGUI_FILES_ROOT} ${DDIRRELATIVE} "${MYGUI_FILES}")

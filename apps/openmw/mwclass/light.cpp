@@ -5,20 +5,16 @@
 #include <components/settings/settings.hpp>
 
 #include "../mwbase/environment.hpp"
-#include "../mwbase/world.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
-#include "../mwbase/mechanicsmanager.hpp"
 
 #include "../mwworld/ptr.hpp"
-#include "../mwworld/actiontake.hpp"
 #include "../mwworld/actionequip.hpp"
 #include "../mwworld/nullaction.hpp"
 #include "../mwworld/failedaction.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/cellstore.hpp"
 #include "../mwphysics/physicssystem.hpp"
-#include "../mwworld/customdata.hpp"
 
 #include "../mwgui/tooltips.hpp"
 
@@ -41,7 +37,7 @@ namespace MWClass
     {
         MWWorld::LiveCellRef<ESM::Light> *ref =
             ptr.get<ESM::Light>();
-        assert (ref->mBase != NULL);
+        assert (ref->mBase != nullptr);
 
         // TODO: add option somewhere to enable collision for placeable objects
         if (!model.empty() && (ref->mBase->mData.mFlags & ESM::Light::Carry) == 0)
@@ -49,10 +45,13 @@ namespace MWClass
 
         if (!ref->mBase->mSound.empty() && !(ref->mBase->mData.mFlags & ESM::Light::OffDefault))
             MWBase::Environment::get().getSoundManager()->playSound3D(ptr, ref->mBase->mSound, 1.0, 1.0,
-                                                                      MWBase::SoundManager::Play_TypeSfx,
-                                                                      MWBase::SoundManager::Play_Loop);
+                                                                      MWSound::Type::Sfx,
+                                                                      MWSound::PlayMode::Loop);
+    }
 
-        MWBase::Environment::get().getMechanicsManager()->add(ptr);
+    bool Light::useAnim() const
+    {
+        return true;
     }
 
     std::string Light::getModel(const MWWorld::ConstPtr &ptr) const
@@ -71,20 +70,21 @@ namespace MWClass
         const MWWorld::LiveCellRef<ESM::Light> *ref = ptr.get<ESM::Light>();
 
         if (ref->mBase->mModel.empty())
-            return "";
+            return std::string();
 
-        return ref->mBase->mName;
+        const std::string& name = ref->mBase->mName;
+        return !name.empty() ? name : ref->mBase->mId;
     }
 
-    boost::shared_ptr<MWWorld::Action> Light::activate (const MWWorld::Ptr& ptr,
+    std::shared_ptr<MWWorld::Action> Light::activate (const MWWorld::Ptr& ptr,
         const MWWorld::Ptr& actor) const
     {
         if(!MWBase::Environment::get().getWindowManager()->isAllowed(MWGui::GW_Inventory))
-            return boost::shared_ptr<MWWorld::Action>(new MWWorld::NullAction());
+            return std::shared_ptr<MWWorld::Action>(new MWWorld::NullAction());
 
         MWWorld::LiveCellRef<ESM::Light> *ref = ptr.get<ESM::Light>();
         if(!(ref->mBase->mData.mFlags&ESM::Light::Carry))
-            return boost::shared_ptr<MWWorld::Action>(new MWWorld::FailedAction());
+            return std::shared_ptr<MWWorld::Action>(new MWWorld::FailedAction());
 
         return defaultItemActivate(ptr, actor);
     }
@@ -117,7 +117,7 @@ namespace MWClass
 
     void Light::registerSelf()
     {
-        boost::shared_ptr<Class> instance (new Light);
+        std::shared_ptr<Class> instance (new Light);
 
         registerClass (typeid (ESM::Light).name(), instance);
     }
@@ -142,9 +142,7 @@ namespace MWClass
 
     bool Light::hasToolTip (const MWWorld::ConstPtr& ptr) const
     {
-        const MWWorld::LiveCellRef<ESM::Light> *ref = ptr.get<ESM::Light>();
-
-        return (ref->mBase->mName != "");
+        return showsInInventory(ptr);
     }
 
     MWGui::ToolTipInfo Light::getToolTipInfo (const MWWorld::ConstPtr& ptr, int count) const
@@ -152,18 +150,17 @@ namespace MWClass
         const MWWorld::LiveCellRef<ESM::Light> *ref = ptr.get<ESM::Light>();
 
         MWGui::ToolTipInfo info;
-        info.caption = ref->mBase->mName + MWGui::ToolTips::getCountString(count);
+        info.caption = MyGUI::TextIterator::toTagsString(getName(ptr)) + MWGui::ToolTips::getCountString(count);
         info.icon = ref->mBase->mIcon;
 
         std::string text;
 
-        if (Settings::Manager::getBool("show effect duration","Game"))
-            text += "\n#{sDuration}: " + MWGui::ToolTips::toString(ptr.getClass().getRemainingUsageTime(ptr));
-        if (ref->mBase->mData.mWeight != 0)
-        {
-            text += "\n#{sWeight}: " + MWGui::ToolTips::toString(ref->mBase->mData.mWeight);
-            text += MWGui::ToolTips::getValueString(ref->mBase->mData.mValue, "#{sValue}");
-        }
+        // Don't show duration for infinite light sources.
+        if (Settings::Manager::getBool("show effect duration","Game") && ptr.getClass().getRemainingUsageTime(ptr) != -1)
+            text += MWGui::ToolTips::getDurationString(ptr.getClass().getRemainingUsageTime(ptr), "\n#{sDuration}");
+
+        text += MWGui::ToolTips::getWeightString(ref->mBase->mData.mWeight, "#{sWeight}");
+        text += MWGui::ToolTips::getValueString(ref->mBase->mData.mValue, "#{sValue}");
 
         if (MWBase::Environment::get().getWindowManager()->getFullHelp()) {
             text += MWGui::ToolTips::getCellRefString(ptr.getCellRef());
@@ -175,9 +172,19 @@ namespace MWClass
         return info;
     }
 
-    boost::shared_ptr<MWWorld::Action> Light::use (const MWWorld::Ptr& ptr) const
+    bool Light::showsInInventory (const MWWorld::ConstPtr& ptr) const
     {
-        boost::shared_ptr<MWWorld::Action> action(new MWWorld::ActionEquip(ptr));
+        const ESM::Light* light = ptr.get<ESM::Light>()->mBase;
+
+        if (!(light->mData.mFlags & ESM::Light::Carry))
+            return false;
+
+        return Class::showsInInventory(ptr);
+    }
+
+    std::shared_ptr<MWWorld::Action> Light::use (const MWWorld::Ptr& ptr, bool force) const
+    {
+        std::shared_ptr<MWWorld::Action> action(new MWWorld::ActionEquip(ptr, force));
 
         action->setSound(getUpSoundId(ptr));
 
@@ -222,24 +229,6 @@ namespace MWClass
         if (!(ref->mBase->mData.mFlags & ESM::Light::Carry))
             return std::make_pair(0,"");
 
-        MWWorld::InventoryStore& invStore = npc.getClass().getInventoryStore(npc);
-        MWWorld::ContainerStoreIterator weapon = invStore.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
-
-        if(weapon == invStore.end())
-            return std::make_pair(1,"");
-
-        /// \todo the 2h check is repeated many times; put it in a function
-        if(weapon->getTypeName() == typeid(ESM::Weapon).name() &&
-                (weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::LongBladeTwoHand ||
-        weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::BluntTwoClose ||
-        weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::BluntTwoWide ||
-        weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::SpearTwoWide ||
-        weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::AxeTwoHand ||
-        weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::MarksmanBow ||
-        weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::MarksmanCrossbow))
-        {
-            return std::make_pair(3,"");
-        }
         return std::make_pair(1,"");
     }
 

@@ -10,7 +10,6 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
-#include "../mwbase/soundmanager.hpp"
 
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/actorutil.hpp"
@@ -21,7 +20,6 @@
 
 namespace MWGui
 {
-
 MerchantRepair::MerchantRepair()
     : WindowBase("openmw_merchantrepair.layout")
 {
@@ -32,13 +30,14 @@ MerchantRepair::MerchantRepair()
     mOkButton->eventMouseButtonClick += MyGUI::newDelegate(this, &MerchantRepair::onOkButtonClick);
 }
 
-void MerchantRepair::startRepair(const MWWorld::Ptr &actor)
+void MerchantRepair::setPtr(const MWWorld::Ptr &actor)
 {
     mActor = actor;
 
     while (mList->getChildCount())
         MyGUI::Gui::getInstance().destroyWidget(mList->getChildAt(0));
 
+    int lineHeight = MWBase::Environment::get().getWindowManager()->getFontHeight() + 2;
     int currentY = 0;
 
     MWWorld::Ptr player = MWMechanics::getPlayer();
@@ -46,19 +45,18 @@ void MerchantRepair::startRepair(const MWWorld::Ptr &actor)
 
     MWWorld::ContainerStore& store = player.getClass().getContainerStore(player);
     int categories = MWWorld::ContainerStore::Type_Weapon | MWWorld::ContainerStore::Type_Armor;
-    for (MWWorld::ContainerStoreIterator iter (store.begin(categories));
-         iter!=store.end(); ++iter)
+    for (MWWorld::ContainerStoreIterator iter (store.begin(categories)); iter!=store.end(); ++iter)
     {
         if (iter->getClass().hasItemHealth(*iter))
         {
             int maxDurability = iter->getClass().getItemMaxHealth(*iter);
             int durability = iter->getClass().getItemHealth(*iter);
-            if (maxDurability == durability)
+            if (maxDurability == durability || maxDurability == 0)
                 continue;
 
             int basePrice = iter->getClass().getValue(*iter);
             float fRepairMult = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>()
-                    .find("fRepairMult")->getFloat();
+                    .find("fRepairMult")->mValue.getFloat();
 
             float p = static_cast<float>(std::max(1, basePrice));
             float r = static_cast<float>(std::max(1, static_cast<int>(maxDurability / p)));
@@ -68,28 +66,26 @@ void MerchantRepair::startRepair(const MWWorld::Ptr &actor)
 
             int price = MWBase::Environment::get().getMechanicsManager()->getBarterOffer(mActor, x, true);
 
-
             std::string name = iter->getClass().getName(*iter)
                     + " - " + MyGUI::utility::toString(price)
                     + MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>()
-                    .find("sgp")->getString();
-
+                    .find("sgp")->mValue.getString();
 
             MyGUI::Button* button =
                 mList->createWidget<MyGUI::Button>(price <= playerGold ? "SandTextButton" : "SandTextButtonDisabled", // can't use setEnabled since that removes tooltip
                     0,
                     currentY,
                     0,
-                    18,
+                    lineHeight,
                     MyGUI::Align::Default
                 );
 
-            currentY += 18;
+            currentY += lineHeight;
 
             button->setUserString("Price", MyGUI::utility::toString(price));
-            button->setUserData(*iter);
+            button->setUserData(MWWorld::Ptr(*iter));
             button->setCaptionWithReplacing(name);
-            button->setSize(button->getTextSize().width,18);
+            button->setSize(mList->getWidth(), lineHeight);
             button->eventMouseWheel += MyGUI::newDelegate(this, &MerchantRepair::onMouseWheel);
             button->setUserString("ToolTipType", "ItemPtr");
             button->eventMouseButtonClick += MyGUI::newDelegate(this, &MerchantRepair::onRepairButtonClick);
@@ -112,16 +108,11 @@ void MerchantRepair::onMouseWheel(MyGUI::Widget* _sender, int _rel)
         mList->setViewOffset(MyGUI::IntPoint(0, static_cast<int>(mList->getViewOffset().top + _rel*0.3f)));
 }
 
-void MerchantRepair::open()
+void MerchantRepair::onOpen()
 {
     center();
     // Reset scrollbars
     mList->setViewOffset(MyGUI::IntPoint(0, 0));
-}
-
-void MerchantRepair::exit()
-{
-    MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_MerchantRepair);
 }
 
 void MerchantRepair::onRepairButtonClick(MyGUI::Widget *sender)
@@ -138,8 +129,7 @@ void MerchantRepair::onRepairButtonClick(MyGUI::Widget *sender)
 
     player.getClass().getContainerStore(player).restack(item);
 
-    MWBase::Environment::get().getSoundManager()->playSound("Repair",1,1);
-
+    MWBase::Environment::get().getWindowManager()->playSound("Repair");
 
     player.getClass().getContainerStore(player).remove(MWWorld::ContainerStore::sGoldId, price, player);
 
@@ -147,12 +137,12 @@ void MerchantRepair::onRepairButtonClick(MyGUI::Widget *sender)
     MWMechanics::CreatureStats& actorStats = mActor.getClass().getCreatureStats(mActor);
     actorStats.setGoldPool(actorStats.getGoldPool() + price);
 
-    startRepair(mActor);
+    setPtr(mActor);
 }
 
 void MerchantRepair::onOkButtonClick(MyGUI::Widget *sender)
 {
-    exit();
+    MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_MerchantRepair);
 }
 
 }

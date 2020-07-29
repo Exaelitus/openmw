@@ -1,11 +1,14 @@
 #include "objects.hpp"
 
-#include <iostream>
-
-#include "movement.hpp"
+#include <components/debug/debuglog.hpp>
+#include <components/esm/loadcont.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
+
+#include "character.hpp"
+#include "movement.hpp"
 
 namespace MWMechanics
 {
@@ -16,11 +19,10 @@ Objects::Objects()
 
 Objects::~Objects()
 {
-  PtrControllerMap::iterator it(mObjects.begin());
-  for (; it != mObjects.end();++it)
+  for(auto& object : mObjects)
   {
-    delete it->second;
-    it->second = NULL;
+    delete object.second;
+    object.second = nullptr;
   }
 }
 
@@ -74,21 +76,55 @@ void Objects::update(float duration, bool paused)
 {
     if(!paused)
     {
-        for(PtrControllerMap::iterator iter(mObjects.begin());iter != mObjects.end();++iter)
-            iter->second->update(duration);
+        for(auto& object : mObjects)
+            object.second->update(duration);
+    }
+    else
+    {
+        // We still should play container opening animation in the Container GUI mode.
+        MWGui::GuiMode mode = MWBase::Environment::get().getWindowManager()->getMode();
+        if(mode != MWGui::GM_Container)
+            return;
+
+        for(auto& object : mObjects)
+        {
+            if (object.first.getTypeName() != typeid(ESM::Container).name())
+                continue;
+
+            if (object.second->isAnimPlaying("containeropen"))
+            {
+                object.second->update(duration);
+                MWBase::Environment::get().getWorld()->updateAnimatedCollisionShape(object.first);
+            }
+        }
     }
 }
 
-bool Objects::playAnimationGroup(const MWWorld::Ptr& ptr, const std::string& groupName, int mode, int number)
+bool Objects::onOpen(const MWWorld::Ptr& ptr)
+{
+    PtrControllerMap::iterator iter = mObjects.find(ptr);
+    if(iter != mObjects.end())
+        return iter->second->onOpen();
+    return true;
+}
+
+void Objects::onClose(const MWWorld::Ptr& ptr)
+{
+    PtrControllerMap::iterator iter = mObjects.find(ptr);
+    if(iter != mObjects.end())
+        iter->second->onClose();
+}
+
+bool Objects::playAnimationGroup(const MWWorld::Ptr& ptr, const std::string& groupName, int mode, int number, bool persist)
 {
     PtrControllerMap::iterator iter = mObjects.find(ptr);
     if(iter != mObjects.end())
     {
-        return iter->second->playGroup(groupName, mode, number);
+        return iter->second->playGroup(groupName, mode, number, persist);
     }
     else
     {
-        std::cerr<< "Error in Objects::playAnimationGroup:  Unable to find " << ptr.getCellRef().getRefId() << std::endl;
+        Log(Debug::Warning) << "Warning: Objects::playAnimationGroup: Unable to find " << ptr.getCellRef().getRefId();
         return false;
     }
 }
@@ -97,6 +133,12 @@ void Objects::skipAnimation(const MWWorld::Ptr& ptr)
     PtrControllerMap::iterator iter = mObjects.find(ptr);
     if(iter != mObjects.end())
         iter->second->skipAnim();
+}
+
+void Objects::persistAnimationStates()
+{
+    for (PtrControllerMap::iterator iter = mObjects.begin(); iter != mObjects.end(); ++iter)
+        iter->second->persistAnimationState();
 }
 
 void Objects::getObjectsInRange(const osg::Vec3f& position, float radius, std::vector<MWWorld::Ptr>& out)

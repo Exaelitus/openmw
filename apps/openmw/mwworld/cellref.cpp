@@ -25,6 +25,11 @@ namespace MWWorld
         return mCellRef.mRefID;
     }
 
+    const std::string* CellRef::getRefIdPtr() const
+    {
+        return &mCellRef.mRefID;
+    }
+
     bool CellRef::getTeleport() const
     {
         return mCellRef.mTeleport;
@@ -70,6 +75,22 @@ namespace MWWorld
         return mCellRef.mEnchantmentCharge;
     }
 
+    float CellRef::getNormalizedEnchantmentCharge(int maxCharge) const
+    {
+        if (maxCharge == 0)
+        {
+            return 0;
+        }
+        else if (mCellRef.mEnchantmentCharge == -1)
+        {
+            return 1;
+        }
+        else
+        {
+            return mCellRef.mEnchantmentCharge / static_cast<float>(maxCharge);
+        }
+    }
+
     void CellRef::setEnchantmentCharge(float charge)
     {
         if (charge != mCellRef.mEnchantmentCharge)
@@ -90,6 +111,24 @@ namespace MWWorld
         {
             mChanged = true;
             mCellRef.mChargeInt = charge;
+        }
+    }
+
+    void CellRef::applyChargeRemainderToBeSubtracted(float chargeRemainder)
+    {
+        mCellRef.mChargeIntRemainder += std::abs(chargeRemainder);
+        if (mCellRef.mChargeIntRemainder > 1.0f)
+        {
+            float newChargeRemainder = (mCellRef.mChargeIntRemainder - std::floor(mCellRef.mChargeIntRemainder));
+            if (mCellRef.mChargeInt <= static_cast<int>(mCellRef.mChargeIntRemainder))
+            {
+                mCellRef.mChargeInt = 0;
+            }
+            else
+            {
+                mCellRef.mChargeInt -= static_cast<int>(mCellRef.mChargeIntRemainder);
+            }
+            mCellRef.mChargeIntRemainder = newChargeRemainder;
         }
     }
 
@@ -189,6 +228,19 @@ namespace MWWorld
             mChanged = true;
             mCellRef.mLockLevel = lockLevel;
         }
+    }
+
+    void CellRef::lock(int lockLevel)
+    {
+        if(lockLevel != 0)
+            setLockLevel(abs(lockLevel)); //Changes lock to locklevel, if positive
+        else
+            setLockLevel(ESM::UnbreakableLock); // If zero, set to max lock level
+    }
+
+    void CellRef::unlock()
+    {
+        setLockLevel(-abs(mCellRef.mLockLevel)); //Makes lockLevel negative
     }
 
     std::string CellRef::getKey() const

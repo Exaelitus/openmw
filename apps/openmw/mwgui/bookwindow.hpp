@@ -9,15 +9,15 @@
 
 namespace MWGui
 {
-    class BookWindow : public WindowBase
+    class BookWindow : public BookWindowBase
     {
         public:
             BookWindow();
 
-            virtual void exit();
-
-            void openBook(MWWorld::Ptr book, bool showTakeButton);
+            void setPtr(const MWWorld::Ptr& book);
             void setInventoryAllowed(bool allowed);
+
+            void onResChange(int, int) { center(); }
 
         protected:
             void onNextPageButtonClicked (MyGUI::Widget* sender);
@@ -27,12 +27,13 @@ namespace MWGui
             void onMouseWheel(MyGUI::Widget* _sender, int _rel);
             void setTakeButtonShow(bool show);
 
+            void onKeyButtonPressed(MyGUI::Widget* sender, MyGUI::KeyCode key, MyGUI::Char character);
+
             void nextPage();
             void prevPage();
 
             void updatePages();
             void clearPages();
-            void adjustButton(Gui::ImageButton* button);
 
         private:
             typedef std::pair<int, int> Page;

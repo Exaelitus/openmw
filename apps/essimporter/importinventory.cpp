@@ -4,8 +4,6 @@
 
 #include <components/esm/esmreader.hpp>
 
-#include <components/esm/loadcont.hpp>
-
 namespace ESSImport
 {
 
@@ -13,21 +11,27 @@ namespace ESSImport
     {
         while (esm.isNextSub("NPCO"))
         {
-            ESM::ContItem contItem;
+            ContItem contItem;
             esm.getHT(contItem);
 
             InventoryItem item;
             item.mId = contItem.mItem.toString();
             item.mCount = contItem.mCount;
             item.mRelativeEquipmentSlot = -1;
+            item.mLockLevel = 0;
 
-            // seems that a stack of items can have a set of subrecords for each item? rings0000.ess
-            // doesn't make any sense to me, if the values were different then the items shouldn't stack in the first place?
-            // I guess we should double check the stacking logic in OpenMW
-            for (int i=0;i<std::abs(item.mCount);++i)
+            unsigned int itemCount = std::abs(item.mCount);
+            bool separateStacks = false;
+            for (unsigned int i=0;i<itemCount;++i)
             {
-                if (esm.isNextSub("XIDX")) // index in the stack?
-                    esm.skipHSub();
+                bool newStack = esm.isNextSub("XIDX");
+                if (newStack)
+                {
+                    unsigned int idx;
+                    esm.getHT(idx);
+                    separateStacks = true;
+                    item.mCount = 1;
+                }
 
                 item.mSCRI.load(esm);
 
@@ -38,9 +42,13 @@ namespace ESSImport
                 int charge=-1;
                 esm.getHNOT(charge, "XHLT");
                 item.mChargeInt = charge;
+
+                if (newStack)
+                    mItems.push_back(item);
             }
 
-            mItems.push_back(item);
+            if (!separateStacks)
+                mItems.push_back(item);
         }
 
         // equipped items

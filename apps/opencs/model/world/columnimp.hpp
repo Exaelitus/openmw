@@ -2,12 +2,12 @@
 #define CSM_WOLRD_COLUMNIMP_H
 
 #include <cassert>
+#include <cstdint>
 #include <sstream>
 #include <stdexcept>
 
-#include <boost/lexical_cast.hpp>
-
 #include <QColor>
+#include <QVector>
 
 #include <components/esm/loadbody.hpp>
 #include <components/esm/loadskil.hpp>
@@ -16,6 +16,9 @@
 #include "columnbase.hpp"
 #include "columns.hpp"
 #include "info.hpp"
+
+#include "land.hpp"
+#include "landtexture.hpp"
 
 namespace CSMWorld
 {
@@ -61,6 +64,20 @@ namespace CSMWorld
             return false;
         }
     };
+
+    template<>
+    inline QVariant StringIdColumn<Land>::get(const Record<Land>& record) const
+    {
+        const Land& land = record.get();
+        return QString::fromUtf8(Land::createUniqueRecordId(land.mX, land.mY).c_str());
+    }
+
+    template<>
+    inline QVariant StringIdColumn<LandTexture>::get(const Record<LandTexture>& record) const
+    {
+        const LandTexture& ltex = record.get();
+        return QString::fromUtf8(LandTexture::createUniqueRecordId(ltex.mPluginIndex, ltex.mIndex).c_str());
+    }
 
     template<typename ESXRecordT>
     struct RecordStateColumn : public Column<ESXRecordT>
@@ -119,7 +136,7 @@ namespace CSMWorld
     struct VarTypeColumn : public Column<ESXRecordT>
     {
         VarTypeColumn (ColumnBase::Display display)
-        : Column<ESXRecordT> (Columns::ColumnId_ValueType, display)
+            : Column<ESXRecordT> (Columns::ColumnId_ValueType, display, ColumnBase::Flag_Table | ColumnBase::Flag_Dialogue | ColumnBase::Flag_Dialogue_Refresh)
         {}
 
         virtual QVariant get (const Record<ESXRecordT>& record) const
@@ -144,7 +161,7 @@ namespace CSMWorld
     template<typename ESXRecordT>
     struct VarValueColumn : public Column<ESXRecordT>
     {
-        VarValueColumn() : Column<ESXRecordT> (Columns::ColumnId_Value, ColumnBase::Display_Var) {}
+        VarValueColumn() : Column<ESXRecordT> (Columns::ColumnId_Value, ColumnBase::Display_Var, ColumnBase::Flag_Table | ColumnBase::Flag_Dialogue | ColumnBase::Flag_Dialogue_Refresh) {}
 
         virtual QVariant get (const Record<ESXRecordT>& record) const
         {
@@ -675,32 +692,23 @@ namespace CSMWorld
         }
     };
 
-    /// \todo QColor is a GUI class and should not be in model. Need to think of an alternative
-    /// solution.
     template<typename ESXRecordT>
     struct MapColourColumn : public Column<ESXRecordT>
     {
-        /// \todo Replace Display_Integer with something that displays the colour value more directly.
         MapColourColumn()
         : Column<ESXRecordT> (Columns::ColumnId_MapColour, ColumnBase::Display_Colour)
         {}
 
         virtual QVariant get (const Record<ESXRecordT>& record) const
         {
-            int colour = record.get().mMapColor;
-
-            return QColor (colour & 0xff, (colour>>8) & 0xff, (colour>>16) & 0xff);
+            return record.get().mMapColor;
         }
 
         virtual void set (Record<ESXRecordT>& record, const QVariant& data)
         {
-            ESXRecordT record2 = record.get();
-
-            QColor colour = data.value<QColor>();
-
-            record2.mMapColor = (colour.blue() << 16) | (colour.green() << 8) | colour.red();
-
-            record.setModified (record2);
+            ESXRecordT copy = record.get();
+            copy.mMapColor = data.toInt();
+            record.setModified (copy);
         }
 
         virtual bool isEditable() const
@@ -1363,12 +1371,12 @@ namespace CSMWorld
         RotColumn (ESM::Position ESXRecordT::* position, int index, bool door)
         : Column<ESXRecordT> (
           (door ? Columns::ColumnId_DoorPositionXRot : Columns::ColumnId_PositionXRot)+index,
-          ColumnBase::Display_Float), mPosition (position), mIndex (index) {}
+          ColumnBase::Display_Double), mPosition (position), mIndex (index) {}
 
         virtual QVariant get (const Record<ESXRecordT>& record) const
         {
             const ESM::Position& position = record.get().*mPosition;
-            return position.rot[mIndex];
+            return osg::RadiansToDegrees(position.rot[mIndex]);
         }
 
         virtual void set (Record<ESXRecordT>& record, const QVariant& data)
@@ -1377,7 +1385,7 @@ namespace CSMWorld
 
             ESM::Position& position = record2.*mPosition;
 
-            position.rot[mIndex] = data.toFloat();
+            position.rot[mIndex] = osg::DegreesToRadians(data.toFloat());
 
             record.setModified (record2);
         }
@@ -1501,9 +1509,9 @@ namespace CSMWorld
     template<typename ESXRecordT>
     struct TopicColumn : public Column<ESXRecordT>
     {
-        TopicColumn (bool journal) 
+        TopicColumn (bool journal)
         : Column<ESXRecordT> (journal ? Columns::ColumnId_Journal : Columns::ColumnId_Topic,
-                              journal ? ColumnBase::Display_Journal : ColumnBase::Display_Topic) 
+                              journal ? ColumnBase::Display_Journal : ColumnBase::Display_Topic)
         {}
 
         virtual QVariant get (const Record<ESXRecordT>& record) const
@@ -1750,6 +1758,41 @@ namespace CSMWorld
             record2.mData.mGender = data.toInt();
 
             record.setModified (record2);
+        }
+
+        virtual bool isEditable() const
+        {
+            return true;
+        }
+    };
+
+    template<typename ESXRecordT>
+    struct GenderNpcColumn : public Column<ESXRecordT>
+    {
+        GenderNpcColumn()
+            : Column<ESXRecordT>(Columns::ColumnId_Gender, ColumnBase::Display_GenderNpc)
+        {}
+
+        virtual QVariant get(const Record<ESXRecordT>& record) const
+        {
+            // Implemented this way to allow additional gender types in the future.
+            if ((record.get().mData.mFlags & ESM::BodyPart::BPF_Female) == ESM::BodyPart::BPF_Female)
+                return 1;
+
+            return 0;
+        }
+
+        virtual void set(Record<ESXRecordT>& record, const QVariant& data)
+        {
+            ESXRecordT record2 = record.get();
+
+            // Implemented this way to allow additional gender types in the future.
+            if (data.toInt() == 1)
+                record2.mData.mFlags = (record2.mData.mFlags & ~ESM::BodyPart::BPF_Female) | ESM::BodyPart::BPF_Female;
+            else
+                record2.mData.mFlags = record2.mData.mFlags & ~ESM::BodyPart::BPF_Female;
+
+            record.setModified(record2);
         }
 
         virtual bool isEditable() const
@@ -2165,8 +2208,8 @@ namespace CSMWorld
     struct EffectTextureColumn : public Column<ESXRecordT>
     {
         EffectTextureColumn (Columns::ColumnId columnId)
-        : Column<ESXRecordT> (columnId, 
-                              columnId == Columns::ColumnId_Particle ? ColumnBase::Display_Texture 
+        : Column<ESXRecordT> (columnId,
+                              columnId == Columns::ColumnId_Particle ? ColumnBase::Display_Texture
                                                                      : ColumnBase::Display_Icon)
         {
             assert (this->mColumnId==Columns::ColumnId_Icon ||
@@ -2384,7 +2427,84 @@ namespace CSMWorld
             return true;
         }
     };
-    
+
+    struct LandTextureNicknameColumn : public Column<LandTexture>
+    {
+        LandTextureNicknameColumn();
+
+        QVariant get(const Record<LandTexture>& record) const override;
+        void set(Record<LandTexture>& record, const QVariant& data) override;
+        bool isEditable() const override;
+    };
+
+    struct LandTextureIndexColumn : public Column<LandTexture>
+    {
+        LandTextureIndexColumn();
+
+        QVariant get(const Record<LandTexture>& record) const override;
+        bool isEditable() const override;
+    };
+
+    struct LandPluginIndexColumn : public Column<Land>
+    {
+        LandPluginIndexColumn();
+
+        QVariant get(const Record<Land>& record) const override;
+        bool isEditable() const override;
+    };
+
+    struct LandTexturePluginIndexColumn : public Column<LandTexture>
+    {
+        LandTexturePluginIndexColumn();
+
+        QVariant get(const Record<LandTexture>& record) const override;
+        bool isEditable() const override;
+    };
+
+    struct LandNormalsColumn : public Column<Land>
+    {
+        using DataType = QVector<signed char>;
+
+        LandNormalsColumn();
+
+        QVariant get(const Record<Land>& record) const override;
+        void set(Record<Land>& record, const QVariant& data) override;
+        bool isEditable() const override;
+    };
+
+    struct LandHeightsColumn : public Column<Land>
+    {
+        using DataType = QVector<float>;
+
+        LandHeightsColumn();
+
+        QVariant get(const Record<Land>& record) const override;
+        void set(Record<Land>& record, const QVariant& data) override;
+        bool isEditable() const override;
+    };
+
+    struct LandColoursColumn : public Column<Land>
+    {
+        using DataType = QVector<unsigned char>;
+
+        LandColoursColumn();
+
+        QVariant get(const Record<Land>& record) const override;
+        void set(Record<Land>& record, const QVariant& data) override;
+        bool isEditable() const override;
+    };
+
+    struct LandTexturesColumn : public Column<Land>
+    {
+        using DataType = QVector<uint16_t>;
+
+        LandTexturesColumn();
+
+        QVariant get(const Record<Land>& record) const override;
+        void set(Record<Land>& record, const QVariant& data) override;
+        bool isEditable() const override;
+    };
+
     struct BodyPartRaceColumn : public RaceColumn<ESM::BodyPart>
     {
         const MeshTypeColumn<ESM::BodyPart> *mMeshType;
@@ -2396,5 +2516,11 @@ namespace CSMWorld
         virtual bool isEditable() const;
     };
 }
+
+// This is required to access the type as a QVariant.
+Q_DECLARE_METATYPE(CSMWorld::LandNormalsColumn::DataType)
+Q_DECLARE_METATYPE(CSMWorld::LandHeightsColumn::DataType)
+Q_DECLARE_METATYPE(CSMWorld::LandColoursColumn::DataType)
+Q_DECLARE_METATYPE(CSMWorld::LandTexturesColumn::DataType)
 
 #endif

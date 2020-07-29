@@ -46,6 +46,11 @@ namespace ESM
         unsigned char mIdle[8];
         unsigned char mShouldRepeat;
     };
+    struct AiWanderDuration
+    {
+        float mRemainingDuration;
+        int unused;
+    };
     struct AiTravelData
     {
         float   mX, mY, mZ;
@@ -61,7 +66,7 @@ namespace ESM
     struct AiWander : AiPackage
     {
         AiWanderData mData;
-        ESM::TimeStamp mStartTime;
+        AiWanderDuration mDurationData; // was ESM::TimeStamp mStartTime
 
         bool mStoredInitialActorPosition;
         ESM::Vector3 mInitialActorPosition;
@@ -75,6 +80,7 @@ namespace ESM
     struct AiTravel : AiPackage
     {
         AiTravelData mData;
+        bool mHidden;
 
         void load(ESMReader &esm);
         void save(ESMWriter &esm) const;
@@ -84,6 +90,7 @@ namespace ESM
     {
         AiEscortData mData;
 
+        int mTargetActorId;
         std::string mTargetId;
         std::string mCellId;
         float mRemainingDuration;
@@ -96,6 +103,7 @@ namespace ESM
     {
         AiEscortData mData;
 
+        int mTargetActorId;
         std::string mTargetId;
         std::string mCellId;
         float mRemainingDuration;
@@ -142,10 +150,14 @@ namespace ESM
 
     struct AiSequence
     {
-        AiSequence() {}
+        AiSequence()
+        {
+            mLastAiPackage = -1;
+        }
         ~AiSequence();
 
         std::vector<AiPackageContainer> mPackages;
+        int mLastAiPackage;
 
         void load (ESMReader &esm);
         void save (ESMWriter &esm) const;

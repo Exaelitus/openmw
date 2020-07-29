@@ -20,11 +20,10 @@
 
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
-#include "../mwmechanics/magiceffects.hpp"
 
 namespace MWWorld
 {
-    std::map<std::string, boost::shared_ptr<Class> > Class::sClasses;
+    std::map<std::string, std::shared_ptr<Class> > Class::sClasses;
 
     Class::Class() {}
 
@@ -83,6 +82,18 @@ namespace MWWorld
             return ptr.getCellRef().getCharge();
     }
 
+    float Class::getItemNormalizedHealth (const ConstPtr& ptr) const
+    {
+        if (getItemMaxHealth(ptr) == 0)
+        {
+            return 0.f;
+        }
+        else
+        {
+            return getItemHealth(ptr) / static_cast<float>(getItemMaxHealth(ptr));
+        }
+    }
+
     int Class::getItemMaxHealth (const ConstPtr& ptr) const
     {
         throw std::runtime_error ("class does not have item health");
@@ -98,19 +109,19 @@ namespace MWWorld
         throw std::runtime_error("class cannot block");
     }
 
-    void Class::onHit(const Ptr& ptr, float damage, bool ishealth, const Ptr& object, const Ptr& attacker, bool successful) const
+    void Class::onHit(const Ptr& ptr, float damage, bool ishealth, const Ptr& object, const Ptr& attacker, const osg::Vec3f& hitPosition, bool successful) const
     {
         throw std::runtime_error("class cannot be hit");
     }
 
-    boost::shared_ptr<Action> Class::activate (const Ptr& ptr, const Ptr& actor) const
+    std::shared_ptr<Action> Class::activate (const Ptr& ptr, const Ptr& actor) const
     {
-        return boost::shared_ptr<Action> (new NullAction);
+        return std::shared_ptr<Action> (new NullAction);
     }
 
-    boost::shared_ptr<Action> Class::use (const Ptr& ptr) const
+    std::shared_ptr<Action> Class::use (const Ptr& ptr, bool force) const
     {
-        return boost::shared_ptr<Action> (new NullAction);
+        return std::shared_ptr<Action> (new NullAction);
     }
 
     ContainerStore& Class::getContainerStore (const Ptr& ptr) const
@@ -126,16 +137,6 @@ namespace MWWorld
     bool Class::hasInventoryStore(const Ptr &ptr) const
     {
         return false;
-    }
-
-    void Class::lock (const Ptr& ptr, int lockLevel) const
-    {
-        throw std::runtime_error ("class does not support locking");
-    }
-
-    void Class::unlock (const Ptr& ptr) const
-    {
-        throw std::runtime_error ("class does not support unlocking");
     }
 
     bool Class::canLock(const ConstPtr &ptr) const
@@ -228,7 +229,7 @@ namespace MWWorld
         if (key.empty())
             throw std::logic_error ("Class::get(): attempting to get an empty key");
 
-        std::map<std::string, boost::shared_ptr<Class> >::const_iterator iter = sClasses.find (key);
+        std::map<std::string, std::shared_ptr<Class> >::const_iterator iter = sClasses.find (key);
 
         if (iter==sClasses.end())
             throw std::logic_error ("Class::get(): unknown class key: " + key);
@@ -241,7 +242,7 @@ namespace MWWorld
         throw std::runtime_error ("class does not support persistence");
     }
 
-    void Class::registerClass(const std::string& key,  boost::shared_ptr<Class> instance)
+    void Class::registerClass(const std::string& key,  std::shared_ptr<Class> instance)
     {
         instance->mTypeName = key;
         sClasses.insert(std::make_pair(key, instance));
@@ -272,9 +273,17 @@ namespace MWWorld
         throw std::runtime_error ("class does not have a tool tip");
     }
 
+    bool Class::showsInInventory (const ConstPtr& ptr) const
+    {
+        // NOTE: Don't show WerewolfRobe objects in the inventory, or allow them to be taken.
+        // Vanilla likely uses a hack like this since there's no other way to prevent it from
+        // being shown or taken.
+        return (ptr.getCellRef().getRefId() != "werewolfrobe");
+    }
+
     bool Class::hasToolTip (const ConstPtr& ptr) const
     {
-        return false;
+        return true;
     }
 
     std::string Class::getEnchantment (const ConstPtr& ptr) const
@@ -289,6 +298,11 @@ namespace MWWorld
     std::string Class::getModel(const MWWorld::ConstPtr &ptr) const
     {
         return "";
+    }
+
+    bool Class::useAnim() const
+    {
+        return false;
     }
 
     void Class::getModelsToPreload(const Ptr &ptr, std::vector<std::string> &models) const
@@ -312,23 +326,23 @@ namespace MWWorld
     {
     }
 
-    boost::shared_ptr<Action> Class::defaultItemActivate(const Ptr &ptr, const Ptr &actor) const
+    std::shared_ptr<Action> Class::defaultItemActivate(const Ptr &ptr, const Ptr &actor) const
     {
         if(!MWBase::Environment::get().getWindowManager()->isAllowed(MWGui::GW_Inventory))
-            return boost::shared_ptr<Action>(new NullAction());
+            return std::shared_ptr<Action>(new NullAction());
 
         if(actor.getClass().isNpc() && actor.getClass().getNpcStats(actor).isWerewolf())
         {
             const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
             const ESM::Sound *sound = store.get<ESM::Sound>().searchRandom("WolfItem");
 
-            boost::shared_ptr<MWWorld::Action> action(new MWWorld::FailedAction("#{sWerewolfRefusal}"));
+            std::shared_ptr<MWWorld::Action> action(new MWWorld::FailedAction("#{sWerewolfRefusal}"));
             if(sound) action->setSound(sound->mId);
 
             return action;
         }
 
-        boost::shared_ptr<MWWorld::Action> action(new ActionTake(ptr));
+        std::shared_ptr<MWWorld::Action> action(new ActionTake(ptr));
         action->setSound(getUpSoundId(ptr));
 
         return action;
@@ -378,9 +392,28 @@ namespace MWWorld
         return false;
     }
 
-    bool Class::isPureWaterCreature(const MWWorld::Ptr& ptr) const
+    bool Class::isPureWaterCreature(const ConstPtr& ptr) const
     {
-        return canSwim(ptr) && !canWalk(ptr);
+        return canSwim(ptr)
+                && !isBipedal(ptr)
+                && !canFly(ptr)
+                && !canWalk(ptr);
+    }
+
+    bool Class::isPureFlyingCreature(const ConstPtr& ptr) const
+    {
+        return canFly(ptr)
+                && !isBipedal(ptr)
+                && !canSwim(ptr)
+                && !canWalk(ptr);
+    }
+
+    bool Class::isPureLandCreature(const Ptr& ptr) const
+    {
+        return canWalk(ptr)
+                && !isBipedal(ptr)
+                && !canFly(ptr)
+                && !canSwim(ptr);
     }
 
     bool Class::isMobile(const MWWorld::Ptr& ptr) const
@@ -388,7 +421,7 @@ namespace MWWorld
         return canSwim(ptr) || canWalk(ptr) || canFly(ptr);
     }
 
-    int Class::getSkill(const MWWorld::Ptr& ptr, int skill) const
+    float Class::getSkill(const MWWorld::Ptr& ptr, int skill) const
     {
         throw std::runtime_error("class does not support skills");
     }
@@ -412,12 +445,12 @@ namespace MWWorld
         return false;
     }
 
-    int Class::getDoorState (const MWWorld::ConstPtr &ptr) const
+    MWWorld::DoorState Class::getDoorState (const MWWorld::ConstPtr &ptr) const
     {
         throw std::runtime_error("this is not a door");
     }
 
-    void Class::setDoorState (const MWWorld::Ptr &ptr, int state) const
+    void Class::setDoorState (const MWWorld::Ptr &ptr, MWWorld::DoorState state) const
     {
         throw std::runtime_error("this is not a door");
     }
@@ -425,10 +458,15 @@ namespace MWWorld
     float Class::getNormalizedEncumbrance(const Ptr &ptr) const
     {
         float capacity = getCapacity(ptr);
+        float encumbrance = getEncumbrance(ptr);
+
+        if (encumbrance == 0)
+            return 0.f;
+
         if (capacity == 0)
             return 1.f;
 
-        return getEncumbrance(ptr) / capacity;
+        return encumbrance / capacity;
     }
 
     std::string Class::getSound(const MWWorld::ConstPtr&) const
@@ -450,8 +488,57 @@ namespace MWWorld
         return -1;
     }
 
-    int Class::getEffectiveArmorRating(const ConstPtr &armor, const Ptr &actor) const
+    float Class::getEffectiveArmorRating(const ConstPtr &armor, const Ptr &actor) const
     {
         throw std::runtime_error("class does not support armor ratings");
+    }
+
+    osg::Vec4f Class::getEnchantmentColor(const MWWorld::ConstPtr& item) const
+    {
+        osg::Vec4f result(1,1,1,1);
+        std::string enchantmentName = item.getClass().getEnchantment(item);
+        if (enchantmentName.empty())
+            return result;
+
+        const ESM::Enchantment* enchantment = MWBase::Environment::get().getWorld()->getStore().get<ESM::Enchantment>().search(enchantmentName);
+        if (!enchantment)
+            return result;
+
+        assert (enchantment->mEffects.mList.size());
+
+        const ESM::MagicEffect* magicEffect = MWBase::Environment::get().getWorld()->getStore().get<ESM::MagicEffect>().search(
+                enchantment->mEffects.mList.front().mEffectID);
+        if (!magicEffect)
+            return result;
+
+        result.x() = magicEffect->mData.mRed / 255.f;
+        result.y() = magicEffect->mData.mGreen / 255.f;
+        result.z() = magicEffect->mData.mBlue / 255.f;
+        return result;
+    }
+
+    void Class::setBaseAISetting(const std::string& id, MWMechanics::CreatureStats::AiSetting setting, int value) const
+    {
+        throw std::runtime_error ("class does not have creature stats");
+    }
+
+    void Class::modifyBaseInventory(const std::string& actorId, const std::string& itemId, int amount) const
+    {
+        throw std::runtime_error ("class does not have an inventory store");
+    }
+
+    float Class::getWalkSpeed(const Ptr& /*ptr*/) const
+    {
+        return 0;
+    }
+
+    float Class::getRunSpeed(const Ptr& /*ptr*/) const
+    {
+        return 0;
+    }
+
+    float Class::getSwimSpeed(const Ptr& /*ptr*/) const
+    {
+        return 0;
     }
 }

@@ -1,18 +1,21 @@
 #include "globalmap.hpp"
 
-#include <climits>
-
 #include <osg/Image>
 #include <osg/Texture2D>
 #include <osg/Group>
 #include <osg/Geometry>
 #include <osg/Depth>
+#include <osg/TexEnvCombine>
 
 #include <osgDB/WriteFile>
 
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/settings/settings.hpp>
 #include <components/files/memorystream.hpp>
+
+#include <components/debug/debuglog.hpp>
+
+#include <components/sceneutil/workqueue.hpp>
 
 #include <components/esm/globalmap.hpp>
 
@@ -71,17 +74,17 @@ namespace
         {
             if (mRendered)
             {
-                node->setNodeMask(0);
+                if (mParent->copyResult(static_cast<osg::Camera*>(node), nv->getTraversalNumber()))
+                {
+                    node->setNodeMask(0);
+                    mParent->markForRemoval(static_cast<osg::Camera*>(node));
+                }
                 return;
             }
 
             traverse(node, nv);
 
-            if (!mRendered)
-            {
-                mRendered = true;
-                mParent->markForRemoval(static_cast<osg::Camera*>(node));
-            }
+            mRendered = true;
         }
 
     private:
@@ -94,8 +97,132 @@ namespace
 namespace MWRender
 {
 
-    GlobalMap::GlobalMap(osg::Group* root)
+    class CreateMapWorkItem : public SceneUtil::WorkItem
+    {
+    public:
+        CreateMapWorkItem(int width, int height, int minX, int minY, int maxX, int maxY, int cellSize, const MWWorld::Store<ESM::Land>& landStore)
+            : mWidth(width), mHeight(height), mMinX(minX), mMinY(minY), mMaxX(maxX), mMaxY(maxY), mCellSize(cellSize), mLandStore(landStore)
+        {
+        }
+
+        virtual void doWork()
+        {
+            osg::ref_ptr<osg::Image> image = new osg::Image;
+            image->allocateImage(mWidth, mHeight, 1, GL_RGB, GL_UNSIGNED_BYTE);
+            unsigned char* data = image->data();
+
+            osg::ref_ptr<osg::Image> alphaImage = new osg::Image;
+            alphaImage->allocateImage(mWidth, mHeight, 1, GL_ALPHA, GL_UNSIGNED_BYTE);
+            unsigned char* alphaData = alphaImage->data();
+
+            for (int x = mMinX; x <= mMaxX; ++x)
+            {
+                for (int y = mMinY; y <= mMaxY; ++y)
+                {
+                    const ESM::Land* land = mLandStore.search (x,y);
+
+                    for (int cellY=0; cellY<mCellSize; ++cellY)
+                    {
+                        for (int cellX=0; cellX<mCellSize; ++cellX)
+                        {
+                            int vertexX = static_cast<int>(float(cellX) / float(mCellSize) * 9);
+                            int vertexY = static_cast<int>(float(cellY) / float(mCellSize) * 9);
+
+                            int texelX = (x-mMinX) * mCellSize + cellX;
+                            int texelY = (y-mMinY) * mCellSize + cellY;
+
+                            unsigned char r,g,b;
+
+                            float y2 = 0;
+                            if (land && (land->mDataTypes & ESM::Land::DATA_WNAM))
+                                y2 = land->mWnam[vertexY * 9 + vertexX] / 128.f;
+                            else
+                                y2 = SCHAR_MIN / 128.f;
+                            if (y2 < 0)
+                            {
+                                r = static_cast<unsigned char>(14 * y2 + 38);
+                                g = static_cast<unsigned char>(20 * y2 + 56);
+                                b = static_cast<unsigned char>(18 * y2 + 51);
+                            }
+                            else if (y2 < 0.3f)
+                            {
+                                if (y2 < 0.1f)
+                                    y2 *= 8.f;
+                                else
+                                {
+                                    y2 -= 0.1f;
+                                    y2 += 0.8f;
+                                }
+                                r = static_cast<unsigned char>(66 - 32 * y2);
+                                g = static_cast<unsigned char>(48 - 23 * y2);
+                                b = static_cast<unsigned char>(33 - 16 * y2);
+                            }
+                            else
+                            {
+                                y2 -= 0.3f;
+                                y2 *= 1.428f;
+                                r = static_cast<unsigned char>(34 - 29 * y2);
+                                g = static_cast<unsigned char>(25 - 20 * y2);
+                                b = static_cast<unsigned char>(17 - 12 * y2);
+                            }
+
+                            data[texelY * mWidth * 3 + texelX * 3] = r;
+                            data[texelY * mWidth * 3 + texelX * 3+1] = g;
+                            data[texelY * mWidth * 3 + texelX * 3+2] = b;
+
+                            alphaData[texelY * mWidth+ texelX] = (y2 < 0) ? static_cast<unsigned char>(0) : static_cast<unsigned char>(255);
+                        }
+                    }
+                }
+            }
+
+            mBaseTexture = new osg::Texture2D;
+            mBaseTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+            mBaseTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+            mBaseTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+            mBaseTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+            mBaseTexture->setImage(image);
+            mBaseTexture->setResizeNonPowerOfTwoHint(false);
+
+            mAlphaTexture = new osg::Texture2D;
+            mAlphaTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+            mAlphaTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+            mAlphaTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+            mAlphaTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+            mAlphaTexture->setImage(alphaImage);
+            mAlphaTexture->setResizeNonPowerOfTwoHint(false);
+
+            mOverlayImage = new osg::Image;
+            mOverlayImage->allocateImage(mWidth, mHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+            assert(mOverlayImage->isDataContiguous());
+
+            memset(mOverlayImage->data(), 0, mOverlayImage->getTotalSizeInBytes());
+
+            mOverlayTexture = new osg::Texture2D;
+            mOverlayTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+            mOverlayTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+            mOverlayTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+            mOverlayTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+            mOverlayTexture->setResizeNonPowerOfTwoHint(false);
+            mOverlayTexture->setInternalFormat(GL_RGBA);
+            mOverlayTexture->setTextureSize(mWidth, mHeight);
+        }
+
+        int mWidth, mHeight;
+        int mMinX, mMinY, mMaxX, mMaxY;
+        int mCellSize;
+        const MWWorld::Store<ESM::Land>& mLandStore;
+
+        osg::ref_ptr<osg::Texture2D> mBaseTexture;
+        osg::ref_ptr<osg::Texture2D> mAlphaTexture;
+
+        osg::ref_ptr<osg::Image> mOverlayImage;
+        osg::ref_ptr<osg::Texture2D> mOverlayTexture;
+    };
+
+    GlobalMap::GlobalMap(osg::Group* root, SceneUtil::WorkQueue* workQueue)
         : mRoot(root)
+        , mWorkQueue(workQueue)
         , mWidth(0)
         , mHeight(0)
         , mMinX(0), mMaxX(0)
@@ -107,9 +234,16 @@ namespace MWRender
 
     GlobalMap::~GlobalMap()
     {
+        for (auto& camera : mCamerasPendingRemoval)
+            removeCamera(camera);
+        for (auto& camera : mActiveCameras)
+            removeCamera(camera);
+
+        if (mWorkItem)
+            mWorkItem->waitTillDone();
     }
 
-    void GlobalMap::render (Loading::Listener* loadingListener)
+    void GlobalMap::render ()
     {
         const MWWorld::ESMStore &esmStore =
             MWBase::Environment::get().getWorld()->getStore();
@@ -131,105 +265,15 @@ namespace MWRender
         mWidth = mCellSize*(mMaxX-mMinX+1);
         mHeight = mCellSize*(mMaxY-mMinY+1);
 
-        loadingListener->loadingOn();
-        loadingListener->setLabel("Creating map");
-        loadingListener->setProgressRange((mMaxX-mMinX+1) * (mMaxY-mMinY+1));
-        loadingListener->setProgress(0);
-
-        osg::ref_ptr<osg::Image> image = new osg::Image;
-        image->allocateImage(mWidth, mHeight, 1, GL_RGB, GL_UNSIGNED_BYTE);
-        unsigned char* data = image->data();
-
-        for (int x = mMinX; x <= mMaxX; ++x)
-        {
-            for (int y = mMinY; y <= mMaxY; ++y)
-            {
-                ESM::Land* land = esmStore.get<ESM::Land>().search (x,y);
-
-                if (land)
-                {
-                    int mask = ESM::Land::DATA_WNAM;
-                    if (!land->isDataLoaded(mask))
-                        land->loadData(mask);
-                }
-
-                const ESM::Land::LandData *landData =
-                    land ? land->getLandData (ESM::Land::DATA_WNAM) : 0;
-
-                for (int cellY=0; cellY<mCellSize; ++cellY)
-                {
-                    for (int cellX=0; cellX<mCellSize; ++cellX)
-                    {
-                        int vertexX = static_cast<int>(float(cellX)/float(mCellSize) * 9);
-                        int vertexY = static_cast<int>(float(cellY) / float(mCellSize) * 9);
-
-                        int texelX = (x-mMinX) * mCellSize + cellX;
-                        int texelY = (y-mMinY) * mCellSize + cellY;
-
-                        unsigned char r,g,b;
-
-                        float y = 0;
-                        if (landData)
-                            y = (landData->mWnam[vertexY * 9 + vertexX] << 4) / 2048.f;
-                        else
-                            y = (SCHAR_MIN << 4) / 2048.f;
-                        if (y < 0)
-                        {
-                            r = static_cast<unsigned char>(14 * y + 38);
-                            g = static_cast<unsigned char>(20 * y + 56);
-                            b = static_cast<unsigned char>(18 * y + 51);
-                        }
-                        else if (y < 0.3f)
-                        {
-                            if (y < 0.1f)
-                                y *= 8.f;
-                            else
-                            {
-                                y -= 0.1f;
-                                y += 0.8f;
-                            }
-                            r = static_cast<unsigned char>(66 - 32 * y);
-                            g = static_cast<unsigned char>(48 - 23 * y);
-                            b = static_cast<unsigned char>(33 - 16 * y);
-                        }
-                        else
-                        {
-                            y -= 0.3f;
-                            y *= 1.428f;
-                            r = static_cast<unsigned char>(34 - 29 * y);
-                            g = static_cast<unsigned char>(25 - 20 * y);
-                            b = static_cast<unsigned char>(17 - 12 * y);
-                        }
-
-                        data[texelY * mWidth * 3 + texelX * 3] = r;
-                        data[texelY * mWidth * 3 + texelX * 3+1] = g;
-                        data[texelY * mWidth * 3 + texelX * 3+2] = b;
-                    }
-                }
-                loadingListener->increaseProgress();
-                if (land)
-                    land->unloadData();
-            }
-        }
-
-        mBaseTexture = new osg::Texture2D;
-        mBaseTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
-        mBaseTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
-        mBaseTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
-        mBaseTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-        mBaseTexture->setImage(image);
-        mBaseTexture->setResizeNonPowerOfTwoHint(false);
-
-        clear();
-
-        loadingListener->loadingOff();
+        mWorkItem = new CreateMapWorkItem(mWidth, mHeight, mMinX, mMinY, mMaxX, mMaxY, mCellSize, esmStore.get<ESM::Land>());
+        mWorkQueue->addWorkItem(mWorkItem);
     }
 
     void GlobalMap::worldPosToImageSpace(float x, float z, float& imageX, float& imageY)
     {
-        imageX = float(x / 8192.f - mMinX) / (mMaxX - mMinX + 1);
+        imageX = float(x / float(Constants::CellSizeInUnits) - mMinX) / (mMaxX - mMinX + 1);
 
-        imageY = 1.f-float(z / 8192.f - mMinY) / (mMaxY - mMinY + 1);
+        imageY = 1.f-float(z / float(Constants::CellSizeInUnits) - mMinY) / (mMaxY - mMinY + 1);
     }
 
     void GlobalMap::cellTopLeftCornerToImageSpace(int x, int y, float& imageX, float& imageY)
@@ -249,7 +293,7 @@ namespace MWRender
         camera->setViewMatrix(osg::Matrix::identity());
         camera->setProjectionMatrix(osg::Matrix::identity());
         camera->setProjectionResizePolicy(osg::Camera::FIXED);
-        camera->setRenderOrder(osg::Camera::PRE_RENDER);
+        camera->setRenderOrder(osg::Camera::PRE_RENDER, 1); // Make sure the global map is rendered after the local map
         y = mHeight - y - height; // convert top-left origin to bottom-left
         camera->setViewport(x, y, width, height);
 
@@ -281,7 +325,7 @@ namespace MWRender
             imageDest.mImage = image;
             imageDest.mX = x;
             imageDest.mY = y;
-            mPendingImageDest.push_back(imageDest);
+            mPendingImageDest[camera] = imageDest;
         }
 
         // Create a quad rendering the updated texture
@@ -295,6 +339,28 @@ namespace MWRender
             stateset->setTextureAttributeAndModes(0, texture, osg::StateAttribute::ON);
             stateset->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
             stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
+
+            if (mAlphaTexture)
+            {
+                osg::ref_ptr<osg::Vec2Array> texcoords = new osg::Vec2Array;
+
+                float x1 = x / static_cast<float>(mWidth);
+                float x2 = (x + width) / static_cast<float>(mWidth);
+                float y1 = y / static_cast<float>(mHeight);
+                float y2 = (y + height) / static_cast<float>(mHeight);
+                texcoords->push_back(osg::Vec2f(x1, y1));
+                texcoords->push_back(osg::Vec2f(x1, y2));
+                texcoords->push_back(osg::Vec2f(x2, y2));
+                texcoords->push_back(osg::Vec2f(x2, y1));
+                geom->setTexCoordArray(1, texcoords, osg::Array::BIND_PER_VERTEX);
+
+                stateset->setTextureAttributeAndModes(1, mAlphaTexture, osg::StateAttribute::ON);
+                osg::ref_ptr<osg::TexEnvCombine> texEnvCombine = new osg::TexEnvCombine;
+                texEnvCombine->setCombine_RGB(osg::TexEnvCombine::REPLACE);
+                texEnvCombine->setSource0_RGB(osg::TexEnvCombine::PREVIOUS);
+                stateset->setTextureAttributeAndModes(1, texEnvCombine);
+            }
+
             camera->addChild(geom);
         }
 
@@ -305,6 +371,8 @@ namespace MWRender
 
     void GlobalMap::exploreCell(int cellX, int cellY, osg::ref_ptr<osg::Texture2D> localMapTexture)
     {
+        ensureLoaded();
+
         if (!localMapTexture)
             return;
 
@@ -319,25 +387,9 @@ namespace MWRender
 
     void GlobalMap::clear()
     {
-        if (!mOverlayImage)
-        {
-            mOverlayImage = new osg::Image;
-            mOverlayImage->allocateImage(mWidth, mHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE);
-            assert(mOverlayImage->isDataContiguous());
-        }
-        memset(mOverlayImage->data(), 0, mOverlayImage->getTotalSizeInBytes());
+        ensureLoaded();
 
-        if (!mOverlayTexture)
-        {
-            mOverlayTexture = new osg::Texture2D;
-            mOverlayTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
-            mOverlayTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
-            mOverlayTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
-            mOverlayTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-            mOverlayTexture->setResizeNonPowerOfTwoHint(false);
-            mOverlayTexture->setInternalFormat(GL_RGBA);
-            mOverlayTexture->setTextureSize(mWidth, mHeight);
-        }
+        memset(mOverlayImage->data(), 0, mOverlayImage->getTotalSizeInBytes());
 
         mPendingImageDest.clear();
 
@@ -348,6 +400,8 @@ namespace MWRender
 
     void GlobalMap::write(ESM::GlobalMap& map)
     {
+        ensureLoaded();
+
         map.mBounds.mMinX = mMinX;
         map.mBounds.mMaxX = mMaxX;
         map.mBounds.mMinY = mMinY;
@@ -357,14 +411,14 @@ namespace MWRender
         osgDB::ReaderWriter* readerwriter = osgDB::Registry::instance()->getReaderWriterForExtension("png");
         if (!readerwriter)
         {
-            std::cerr << "Can't write map overlay: no png readerwriter found" << std::endl;
+            Log(Debug::Error) << "Error: Can't write map overlay: no png readerwriter found";
             return;
         }
 
         osgDB::ReaderWriter::WriteResult result = readerwriter->writeImage(*mOverlayImage, ostream);
         if (!result.success())
         {
-            std::cerr << "Can't write map overlay: " << result.message() << " code " << result.status() << std::endl;
+            Log(Debug::Warning) << "Error: Can't write map overlay: " << result.message() << " code " << result.status();
             return;
         }
 
@@ -388,6 +442,8 @@ namespace MWRender
 
     void GlobalMap::read(ESM::GlobalMap& map)
     {
+        ensureLoaded();
+
         const ESM::GlobalMap::Bounds& bounds = map.mBounds;
 
         if (bounds.mMaxX-bounds.mMinX < 0)
@@ -402,19 +458,19 @@ namespace MWRender
         if (map.mImageData.empty())
             return;
 
-        Files::IMemStream istream(&map.mImageData[0], map.mImageData.size());
+        Files::IMemStream istream(map.mImageData.data(), map.mImageData.size());
 
         osgDB::ReaderWriter* readerwriter = osgDB::Registry::instance()->getReaderWriterForExtension("png");
         if (!readerwriter)
         {
-            std::cerr << "Can't read map overlay: no png readerwriter found" << std::endl;
+            Log(Debug::Error) << "Error: Can't read map overlay: no png readerwriter found";
             return;
         }
 
         osgDB::ReaderWriter::ReadResult result = readerwriter->readImage(istream);
         if (!result.success())
         {
-            std::cerr << "Can't read map overlay: " << result.message() << " code " << result.status() << std::endl;
+            Log(Debug::Error) << "Error: Can't read map overlay: " << result.message() << " code " << result.status();
             return;
         }
 
@@ -467,7 +523,7 @@ namespace MWRender
 
         if (srcBox == destBox && imageWidth == mWidth && imageHeight == mHeight)
         {
-            mOverlayImage->copySubImage(0, 0, 0, image);
+            mOverlayImage = image;
 
             requestOverlayTextureUpdate(0, 0, mWidth, mHeight, texture, true, false);
         }
@@ -484,12 +540,52 @@ namespace MWRender
 
     osg::ref_ptr<osg::Texture2D> GlobalMap::getBaseTexture()
     {
+        ensureLoaded();
         return mBaseTexture;
     }
 
     osg::ref_ptr<osg::Texture2D> GlobalMap::getOverlayTexture()
     {
+        ensureLoaded();
         return mOverlayTexture;
+    }
+
+    void GlobalMap::ensureLoaded()
+    {
+        if (mWorkItem)
+        {
+            mWorkItem->waitTillDone();
+
+            mOverlayImage = mWorkItem->mOverlayImage;
+            mBaseTexture = mWorkItem->mBaseTexture;
+            mAlphaTexture = mWorkItem->mAlphaTexture;
+            mOverlayTexture = mWorkItem->mOverlayTexture;
+
+            requestOverlayTextureUpdate(0, 0, mWidth, mHeight, osg::ref_ptr<osg::Texture2D>(), true, false);
+
+            mWorkItem = nullptr;
+        }
+    }
+
+    bool GlobalMap::copyResult(osg::Camera *camera, unsigned int frame)
+    {
+        ImageDestMap::iterator it = mPendingImageDest.find(camera);
+        if (it == mPendingImageDest.end())
+            return true;
+        else
+        {
+            ImageDest& imageDest = it->second;
+            if (imageDest.mFrameDone == 0) imageDest.mFrameDone = frame+2; // wait an extra frame to ensure the draw thread has completed its frame.
+            if (imageDest.mFrameDone > frame)
+            {
+                ++it;
+                return false;
+            }
+
+            mOverlayImage->copySubImage(imageDest.mX, imageDest.mY, 0, imageDest.mImage);
+            it = mPendingImageDest.erase(it);
+            return true;
+        }
     }
 
     void GlobalMap::markForRemoval(osg::Camera *camera)
@@ -497,7 +593,7 @@ namespace MWRender
         CameraVector::iterator found = std::find(mActiveCameras.begin(), mActiveCameras.end(), camera);
         if (found == mActiveCameras.end())
         {
-            std::cerr << "GlobalMap trying to remove an inactive camera" << std::endl;
+            Log(Debug::Error) << "Error: GlobalMap trying to remove an inactive camera";
             return;
         }
         mActiveCameras.erase(found);
@@ -506,22 +602,15 @@ namespace MWRender
 
     void GlobalMap::cleanupCameras()
     {
-        for (CameraVector::iterator it = mCamerasPendingRemoval.begin(); it != mCamerasPendingRemoval.end(); ++it)
-            mRoot->removeChild(*it);
+        for (auto& camera : mCamerasPendingRemoval)
+            removeCamera(camera);
+
         mCamerasPendingRemoval.clear();
+    }
 
-        for (ImageDestVector::iterator it = mPendingImageDest.begin(); it != mPendingImageDest.end();)
-        {
-            ImageDest& imageDest = *it;
-            if (--imageDest.mFramesUntilDone > 0)
-            {
-                ++it;
-                continue;
-            }
-
-            mOverlayImage->copySubImage(imageDest.mX, imageDest.mY, 0, imageDest.mImage);
-
-            it = mPendingImageDest.erase(it);
-        }
+    void GlobalMap::removeCamera(osg::Camera *cam)
+    {
+        cam->removeChildren(0, cam->getNumChildren());
+        mRoot->removeChild(cam);
     }
 }

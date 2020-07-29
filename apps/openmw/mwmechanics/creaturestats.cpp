@@ -7,6 +7,7 @@
 #include <components/esm/esmwriter.hpp>
 
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/player.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -17,12 +18,12 @@ namespace MWMechanics
     int CreatureStats::sActorId = 0;
 
     CreatureStats::CreatureStats()
-        : mDrawState (DrawState_Nothing), mDead (false), mDied (false), mMurdered(false), mFriendlyHits (0),
+        : mDrawState (DrawState_Nothing), mDead (false), mDeathAnimationFinished(false), mDied (false), mMurdered(false), mFriendlyHits (0),
           mTalkedTo (false), mAlarmed (false), mAttacked (false),
           mKnockdown(false), mKnockdownOneFrame(false), mKnockdownOverOneFrame(false),
           mHitRecovery(false), mBlock(false), mMovementFlags(0),
-          mFallHeight(0), mRecalcMagicka(false), mLastRestock(0,0), mGoldPool(0), mActorId(-1),
-          mDeathAnimation(0), mTimeOfDeath(), mLevel (0)
+          mFallHeight(0), mRecalcMagicka(false), mLastRestock(0,0), mGoldPool(0), mActorId(-1), mHitAttemptActorId(-1),
+          mDeathAnimation(-1), mTimeOfDeath(), mSideMovementAngle(0), mLevel (0)
     {
         for (int i=0; i<4; ++i)
             mAiSettings[i] = 0;
@@ -48,8 +49,8 @@ namespace MWMechanics
         const MWWorld::Store<ESM::GameSetting> &gmst =
             MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
 
-        static const float fFatigueBase = gmst.find("fFatigueBase")->getFloat();
-        static const float fFatigueMult = gmst.find("fFatigueMult")->getFloat();
+        static const float fFatigueBase = gmst.find("fFatigueBase")->mValue.getFloat();
+        static const float fFatigueMult = gmst.find("fFatigueMult")->mValue.getFloat();
 
         return fFatigueBase - fFatigueMult * (1-normalised);
     }
@@ -125,7 +126,7 @@ namespace MWMechanics
         return mMagicEffects;
     }
 
-    void CreatureStats::setAttribute(int index, int base)
+    void CreatureStats::setAttribute(int index, float base)
     {
         AttributeValue current = getAttribute(index);
         current.setBase(base);
@@ -151,13 +152,15 @@ namespace MWMechanics
                      index == ESM::Attribute::Agility ||
                      index == ESM::Attribute::Endurance)
             {
-                int strength     = getAttribute(ESM::Attribute::Strength).getModified();
-                int willpower    = getAttribute(ESM::Attribute::Willpower).getModified();
-                int agility      = getAttribute(ESM::Attribute::Agility).getModified();
-                int endurance    = getAttribute(ESM::Attribute::Endurance).getModified();
+                float strength     = getAttribute(ESM::Attribute::Strength).getModified();
+                float willpower    = getAttribute(ESM::Attribute::Willpower).getModified();
+                float agility      = getAttribute(ESM::Attribute::Agility).getModified();
+                float endurance    = getAttribute(ESM::Attribute::Endurance).getModified();
                 DynamicStat<float> fatigue = getFatigue();
                 float diff = (strength+willpower+agility+endurance) - fatigue.getBase();
-                fatigue.modify(diff);
+                float currentToBaseRatio = fatigue.getBase() > 0 ? (fatigue.getCurrent() / fatigue.getBase()) : 0;
+                fatigue.setModified(fatigue.getModified() + diff, 0);
+                fatigue.setCurrent(fatigue.getBase() * currentToBaseRatio);
                 setFatigue(fatigue);
             }
         }
@@ -193,10 +196,8 @@ namespace MWMechanics
             mDead = true;
 
             mDynamic[index].setModifier(0);
+            mDynamic[index].setCurrentModifier(0);
             mDynamic[index].setCurrent(0);
-
-            if (MWBase::Environment::get().getWorld()->getGodModeState())
-                MWBase::Environment::get().getMechanicsManager()->keepPlayerAlive();
         }
     }
 
@@ -234,6 +235,16 @@ namespace MWMechanics
     bool CreatureStats::isDead() const
     {
         return mDead;
+    }
+
+    bool CreatureStats::isDeathAnimationFinished() const
+    {
+        return mDeathAnimationFinished;
+    }
+
+    void CreatureStats::setDeathAnimationFinished(bool finished)
+    {
+        mDeathAnimationFinished = finished;
     }
 
     void CreatureStats::notifyDied()
@@ -275,6 +286,7 @@ namespace MWMechanics
 
             mDynamic[0].setCurrent(mDynamic[0].getModified());
             mDead = false;
+            mDeathAnimationFinished = false;
         }
     }
 
@@ -358,13 +370,31 @@ namespace MWMechanics
         return mLastHitAttemptObject;
     }
 
+    void CreatureStats::setHitAttemptActorId(int actorId)
+    {
+        mHitAttemptActorId = actorId;
+    }
+
+    int CreatureStats::getHitAttemptActorId() const
+    {
+        return mHitAttemptActorId;
+    }
+
     void CreatureStats::addToFallHeight(float height)
     {
         mFallHeight += height;
     }
 
-    float CreatureStats::land()
+    float CreatureStats::getFallHeight() const
     {
+        return mFallHeight;
+    }
+
+    float CreatureStats::land(bool isPlayer)
+    {
+        if (isPlayer)
+            MWBase::Environment::get().getWorld()->getPlayer().setJumping(false);
+
         float height = mFallHeight;
         mFallHeight = 0;
         return height;
@@ -482,6 +512,7 @@ namespace MWMechanics
         state.mGoldPool = mGoldPool;
 
         state.mDead = mDead;
+        state.mDeathAnimationFinished = mDeathAnimationFinished;
         state.mDied = mDied;
         state.mMurdered = mMurdered;
         // The vanilla engine does not store friendly hits in the save file. Since there's no other mechanism
@@ -507,6 +538,7 @@ namespace MWMechanics
         state.mActorId = mActorId;
         state.mDeathAnimation = mDeathAnimation;
         state.mTimeOfDeath = mTimeOfDeath.toEsm();
+        //state.mHitAttemptActorId = mHitAttemptActorId;
 
         mSpells.writeState(state.mSpells);
         mActiveSpells.writeState(state.mActiveSpells);
@@ -519,6 +551,14 @@ namespace MWMechanics
         state.mHasAiSettings = true;
         for (int i=0; i<4; ++i)
             mAiSettings[i].writeState (state.mAiSettings[i]);
+
+        for (auto it = mCorprusSpells.begin(); it != mCorprusSpells.end(); ++it)
+        {
+            for (int i=0; i<ESM::Attribute::Length; ++i)
+                state.mCorprusSpells[it->first].mWorsenings[i] = mCorprusSpells.at(it->first).mWorsenings[i];
+
+            state.mCorprusSpells[it->first].mNextWorsening = mCorprusSpells.at(it->first).mNextWorsening.toEsm();
+        }
     }
 
     void CreatureStats::readState (const ESM::CreatureStats& state)
@@ -533,6 +573,7 @@ namespace MWMechanics
         mGoldPool = state.mGoldPool;
 
         mDead = state.mDead;
+        mDeathAnimationFinished = state.mDeathAnimationFinished;
         mDied = state.mDied;
         mMurdered = state.mMurdered;
         mTalkedTo = state.mTalkedTo;
@@ -554,8 +595,9 @@ namespace MWMechanics
         mActorId = state.mActorId;
         mDeathAnimation = state.mDeathAnimation;
         mTimeOfDeath = MWWorld::TimeStamp(state.mTimeOfDeath);
+        //mHitAttemptActorId = state.mHitAttemptActorId;
 
-        mSpells.readState(state.mSpells);
+        mSpells.readState(state.mSpells, this);
         mActiveSpells.readState(state.mActiveSpells);
         mAiSequence.readState(state.mAiSequence);
         mMagicEffects.readState(state.mMagicEffects);
@@ -566,6 +608,15 @@ namespace MWMechanics
         if (state.mHasAiSettings)
             for (int i=0; i<4; ++i)
                 mAiSettings[i].readState(state.mAiSettings[i]);
+
+        mCorprusSpells.clear();
+        for (auto it = state.mCorprusSpells.begin(); it != state.mCorprusSpells.end(); ++it)
+        {
+            for (int i=0; i<ESM::Attribute::Length; ++i)
+                mCorprusSpells[it->first].mWorsenings[i] = state.mCorprusSpells.at(it->first).mWorsenings[i];
+
+            mCorprusSpells[it->first].mNextWorsening = MWWorld::TimeStamp(state.mCorprusSpells.at(it->first).mNextWorsening);
+        }
     }
 
     void CreatureStats::setLastRestockTime(MWWorld::TimeStamp tradeTime)
@@ -617,12 +668,12 @@ namespace MWMechanics
         esm.getHNT(sActorId, "COUN");
     }
 
-    unsigned char CreatureStats::getDeathAnimation() const
+    signed char CreatureStats::getDeathAnimation() const
     {
         return mDeathAnimation;
     }
 
-    void CreatureStats::setDeathAnimation(unsigned char index)
+    void CreatureStats::setDeathAnimation(signed char index)
     {
         mDeathAnimation = index;
     }
@@ -640,5 +691,24 @@ namespace MWMechanics
     std::vector<int>& CreatureStats::getSummonedCreatureGraveyard()
     {
         return mSummonGraveyard;
+    }
+
+    std::map<std::string, CorprusStats> &CreatureStats::getCorprusSpells()
+    {
+        return mCorprusSpells;
+    }
+
+    void CreatureStats::addCorprusSpell(const std::string& sourceId, CorprusStats& stats)
+    {
+        mCorprusSpells[sourceId] = stats;
+    }
+
+    void CreatureStats::removeCorprusSpell(const std::string& sourceId)
+    {
+        auto corprusIt = mCorprusSpells.find(sourceId);
+        if (corprusIt != mCorprusSpells.end())
+        {
+            mCorprusSpells.erase(corprusIt);
+        }
     }
 }

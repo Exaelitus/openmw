@@ -1,17 +1,17 @@
 #include "cells.hpp"
 
-#include <iostream>
-
+#include <components/debug/debuglog.hpp>
 #include <components/esm/esmreader.hpp>
 #include <components/esm/esmwriter.hpp>
 #include <components/esm/defs.hpp>
 #include <components/esm/cellstate.hpp>
+#include <components/esm/cellref.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
+#include <components/settings/settings.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
-#include "class.hpp"
 #include "esmstore.hpp"
 #include "containerstore.hpp"
 #include "cellstore.hpp"
@@ -88,7 +88,7 @@ void MWWorld::Cells::writeCell (ESM::ESMWriter& writer, CellStore& cell) const
 
 MWWorld::Cells::Cells (const MWWorld::ESMStore& store, std::vector<ESM::ESMReader>& reader)
 : mStore (store), mReader (reader),
-  mIdCache (40, std::pair<std::string, CellStore *> ("", (CellStore*)0)), /// \todo make cache size configurable
+  mIdCache (Settings::Manager::getInt("pointers cache size", "Cells"), std::pair<std::string, CellStore *> ("", (CellStore*)0)),
   mIdCacheIndex (0)
 {}
 
@@ -105,6 +105,10 @@ MWWorld::CellStore *MWWorld::Cells::getExterior (int x, int y)
         {
             // Cell isn't predefined. Make one on the fly.
             ESM::Cell record;
+            record.mCellId.mWorldspace = ESM::CellId::sDefaultWorldspace;
+            record.mCellId.mPaged = true;
+            record.mCellId.mIndex.mX = x;
+            record.mCellId.mIndex.mY = y;
 
             record.mData.mFlags = ESM::Cell::HasWater;
             record.mData.mX = x;
@@ -145,6 +149,32 @@ MWWorld::CellStore *MWWorld::Cells::getInterior (const std::string& name)
     }
 
     return &result->second;
+}
+
+void MWWorld::Cells::rest (double hours)
+{
+    for (auto &interior : mInteriors)
+    {
+        interior.second.rest(hours);
+    }
+
+    for (auto &exterior : mExteriors)
+    {
+        exterior.second.rest(hours);
+    }
+}
+
+void MWWorld::Cells::recharge (float duration)
+{
+    for (auto &interior : mInteriors)
+    {
+        interior.second.recharge(duration);
+    }
+
+    for (auto &exterior : mExteriors)
+    {
+        exterior.second.recharge(duration);
+    }
 }
 
 MWWorld::CellStore *MWWorld::Cells::getCell (const ESM::CellId& id)
@@ -241,6 +271,37 @@ MWWorld::Ptr MWWorld::Cells::getPtr (const std::string& name)
     return Ptr();
 }
 
+MWWorld::Ptr MWWorld::Cells::getPtr (const std::string& id, const ESM::RefNum& refNum)
+{
+    for (auto& pair : mInteriors)
+    {
+        Ptr ptr = getPtr(pair.second, id, refNum);
+        if (!ptr.isEmpty())
+            return ptr;
+    }
+    for (auto& pair : mExteriors)
+    {
+        Ptr ptr = getPtr(pair.second, id, refNum);
+        if (!ptr.isEmpty())
+            return ptr;
+    }
+    return Ptr();
+}
+
+MWWorld::Ptr MWWorld::Cells::getPtr(CellStore& cellStore, const std::string& id, const ESM::RefNum& refNum)
+{
+    if (cellStore.getState() == CellStore::State_Unloaded)
+        cellStore.preload();
+    if (cellStore.getState() == CellStore::State_Preloaded)
+    {
+        if (cellStore.hasId(id))
+            cellStore.load();
+        else
+            return Ptr();
+    }
+    return cellStore.searchViaRefNum(refNum);
+}
+
 void MWWorld::Cells::getExteriorPtrs(const std::string &name, std::vector<MWWorld::Ptr> &out)
 {
     const MWWorld::Store<ESM::Cell> &cells = mStore.get<ESM::Cell>();
@@ -323,7 +384,7 @@ public:
         }
         catch (...)
         {
-            return NULL;
+            return nullptr;
         }
     }
 };
@@ -345,7 +406,7 @@ bool MWWorld::Cells::readRecord (ESM::ESMReader& reader, uint32_t type,
         catch (...)
         {
             // silently drop cells that don't exist anymore
-            std::cerr << "Dropping state for cell " << state.mId.mWorldspace << " (cell no longer exists)" << std::endl;
+            Log(Debug::Warning) << "Warning: Dropping state for cell " << state.mId.mWorldspace << " (cell no longer exists)";
             reader.skipRecord();
             return true;
         }

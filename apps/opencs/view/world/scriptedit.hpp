@@ -6,6 +6,7 @@
 #include <QVector>
 #include <QTimer>
 #include <QFont>
+#include <QAction>
 
 #include "../../model/world/universalid.hpp"
 
@@ -53,6 +54,10 @@ namespace CSVWorld
             LineNumberArea *mLineNumberArea;
             QFont mDefaultFont;
             QFont mMonoFont;
+            int mTabCharCount;
+            bool mMarkOccurrences;
+            QAction *mCommentAction;
+            QAction *mUncommentAction;
 
         protected:
 
@@ -71,11 +76,12 @@ namespace CSVWorld
             void lineNumberAreaPaintEvent(QPaintEvent *event);
             int lineNumberAreaWidth();
             void showLineNum(bool show);
-            void setMonoFont(bool show);
 
         protected:
 
             virtual void resizeEvent(QResizeEvent *e);
+
+            virtual void contextMenuEvent(QContextMenuEvent *event);
 
         private:
 
@@ -90,6 +96,9 @@ namespace CSVWorld
             void dragMoveEvent (QDragMoveEvent* event);
 
             bool stringNeedsQuote(const std::string& id) const;
+
+            /// \brief Set tab width for script editor.
+            void setTabWidth();
 
             /// \brief Turn line wrapping in script editor on or off.
             /// \param wrap Whether or not to wrap lines.
@@ -108,6 +117,13 @@ namespace CSVWorld
             void updateLineNumberAreaWidth(int newBlockCount);
 
             void updateLineNumberArea(const QRect &, int);
+
+            void markOccurrences();
+            
+            void commentSelection();
+
+            void uncommentSelection();
+            
     };
 
     class LineNumberArea : public QWidget

@@ -1,7 +1,8 @@
 #ifndef COMPONENTS_ESM_TERRAIN_STORAGE_H
 #define COMPONENTS_ESM_TERRAIN_STORAGE_H
 
-#include <OpenThreads/Mutex>
+#include <cassert>
+#include <mutex>
 
 #include <components/terrain/storage.hpp>
 
@@ -16,25 +17,48 @@ namespace VFS
 namespace ESMTerrain
 {
 
+    class LandCache;
+
+    /// @brief Wrapper around Land Data with reference counting. The wrapper needs to be held as long as the data is still in use
+    class LandObject : public osg::Object
+    {
+    public:
+        LandObject();
+        LandObject(const ESM::Land* land, int loadFlags);
+        LandObject(const LandObject& copy, const osg::CopyOp& copyop);
+        virtual ~LandObject();
+
+        META_Object(ESMTerrain, LandObject)
+
+        inline const ESM::Land::LandData* getData(int flags) const
+        {
+            if ((mData.mDataLoaded & flags) != flags)
+                return nullptr;
+            return &mData;
+        }
+
+        inline int getPlugin() const
+        {
+            return mLand->mPlugin;
+        }
+
+    private:
+        const ESM::Land* mLand;
+        int mLoadFlags;
+
+        ESM::Land::LandData mData;
+    };
+
     /// @brief Feeds data from ESM terrain records (ESM::Land, ESM::LandTexture)
     ///        into the terrain component, converting it on the fly as needed.
     class Storage : public Terrain::Storage
     {
-    private:
-
-        // Not implemented in this class, because we need different Store implementations for game and editor
-        virtual const ESM::Land* getLand (int cellX, int cellY)= 0;
-        virtual const ESM::LandTexture* getLandTexture(int index, short plugin) = 0;
-
     public:
         Storage(const VFS::Manager* vfs, const std::string& normalMapPattern = "", const std::string& normalHeightMapPattern = "", bool autoUseNormalMaps = false, const std::string& specularMapPattern = "", bool autoUseSpecularMaps = false);
 
-        /// Data is loaded first, if necessary. Will return a 0-pointer if there is no data for
-        /// any of the data types specified via \a flags. Will also return a 0-pointer if there
-        /// is no land record for the coordinates \a cellX / \a cellY.
-        const ESM::Land::LandData *getLandData (int cellX, int cellY, int flags);
-
         // Not implemented in this class, because we need different Store implementations for game and editor
+        virtual osg::ref_ptr<const LandObject> getLand (int cellX, int cellY)= 0;
+        virtual const ESM::LandTexture* getLandTexture(int index, short plugin) = 0;
         /// Get bounds of the whole terrain in cell units
         virtual void getBounds(float& minX, float& maxX, float& minY, float& maxY) = 0;
 
@@ -61,7 +85,7 @@ namespace ESMTerrain
         virtual void fillVertexBuffers (int lodLevel, float size, const osg::Vec2f& center,
                                 osg::ref_ptr<osg::Vec3Array> positions,
                                 osg::ref_ptr<osg::Vec3Array> normals,
-                                osg::ref_ptr<osg::Vec4Array> colours);
+                                osg::ref_ptr<osg::Vec4ubArray> colours);
 
         /// Create textures holding layer blend values for a terrain chunk.
         /// @note The terrain chunk shouldn't be larger than one cell since otherwise we might
@@ -69,18 +93,12 @@ namespace ESMTerrain
         /// @note May be called from background threads.
         /// @param chunkSize size of the terrain chunk in cell units
         /// @param chunkCenter center of the chunk in cell units
-        /// @param pack Whether to pack blend values for up to 4 layers into one texture (one in each channel) -
-        ///        otherwise, each texture contains blend values for one layer only. Shader-based rendering
-        ///        can utilize packing, FFP can't.
         /// @param blendmaps created blendmaps will be written here
         /// @param layerList names of the layer textures used will be written here
-        virtual void getBlendmaps (float chunkSize, const osg::Vec2f& chunkCenter, bool pack,
-                           ImageVector& blendmaps,
-                           std::vector<Terrain::LayerInfo>& layerList);
+        virtual void getBlendmaps (float chunkSize, const osg::Vec2f& chunkCenter, ImageVector& blendmaps,
+                               std::vector<Terrain::LayerInfo>& layerList);
 
         virtual float getHeightAt (const osg::Vec3f& worldPos);
-
-        virtual Terrain::LayerInfo getDefaultLayer();
 
         /// Get the transformation factor for mapping cell units to world units.
         virtual float getCellWorldSize();
@@ -88,26 +106,38 @@ namespace ESMTerrain
         /// Get the number of vertices on one side for each cell. Should be (power of two)+1
         virtual int getCellVertices();
 
+        virtual int getBlendmapScale(float chunkSize);
+
+        float getVertexHeight (const ESM::Land::LandData* data, int x, int y)
+        {
+            assert(x < ESM::Land::LAND_SIZE);
+            assert(y < ESM::Land::LAND_SIZE);
+            return data->mHeights[y * ESM::Land::LAND_SIZE + x];
+        }
+
     private:
         const VFS::Manager* mVFS;
 
-        void fixNormal (osg::Vec3f& normal, int cellX, int cellY, int col, int row);
-        void fixColour (osg::Vec4f& colour, int cellX, int cellY, int col, int row);
-        void averageNormal (osg::Vec3f& normal, int cellX, int cellY, int col, int row);
+        inline void fixNormal (osg::Vec3f& normal, int cellX, int cellY, int col, int row, LandCache& cache);
+        inline void fixColour (osg::Vec4ub& colour, int cellX, int cellY, int col, int row, LandCache& cache);
+        inline void averageNormal (osg::Vec3f& normal, int cellX, int cellY, int col, int row, LandCache& cache);
 
-        float getVertexHeight (const ESM::Land* land, int x, int y);
+        inline const LandObject* getLand(int cellX, int cellY, LandCache& cache);
+
+        virtual bool useAlteration() const { return false; }
+        virtual void adjustColor(int col, int row, const ESM::Land::LandData *heightData, osg::Vec4ub& color) const;
+        virtual float getAlteredHeight(int col, int row) const;
 
         // Since plugins can define new texture palettes, we need to know the plugin index too
         // in order to retrieve the correct texture name.
         // pair  <texture id, plugin id>
         typedef std::pair<short, short> UniqueTextureId;
 
-        UniqueTextureId getVtexIndexAt(int cellX, int cellY,
-                                               int x, int y);
+        inline UniqueTextureId getVtexIndexAt(int cellX, int cellY, int x, int y, LandCache&);
         std::string getTextureName (UniqueTextureId id);
 
         std::map<std::string, Terrain::LayerInfo> mLayerInfoMap;
-        OpenThreads::Mutex mLayerInfoMutex;
+        std::mutex mLayerInfoMutex;
 
         std::string mNormalMapPattern;
         std::string mNormalHeightMapPattern;

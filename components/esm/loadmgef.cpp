@@ -1,9 +1,6 @@
 #include "loadmgef.hpp"
 
-#include <stdexcept>
 #include <sstream>
-
-#include <boost/lexical_cast.hpp>
 
 #include "esmreader.hpp"
 #include "esmwriter.hpp"
@@ -211,7 +208,7 @@ void MagicEffect::load(ESMReader &esm, bool &isDeleted)
     while (esm.hasMoreSubs())
     {
         esm.getSubName();
-        switch (esm.retSubName().val)
+        switch (esm.retSubName().intval)
         {
             case ESM::FourCC<'I','T','E','X'>::value:
                 mIcon = esm.getHString();
@@ -277,42 +274,45 @@ short MagicEffect::getResistanceEffect(short effect)
     // Source https://wiki.openmw.org/index.php?title=Research:Magic#Effect_attribute
 
     // <Effect, Effect providing resistance against first effect>
-    std::map<short, short> effects;
-    effects[DisintegrateArmor] = Sanctuary;
-    effects[DisintegrateWeapon] = Sanctuary;
-
-    for (int i=0; i<5; ++i)
-        effects[DrainAttribute+i] = ResistMagicka;
-    for (int i=0; i<5; ++i)
-        effects[DamageAttribute+i] = ResistMagicka;
-    for (int i=0; i<5; ++i)
-        effects[AbsorbAttribute+i] = ResistMagicka;
-    for (int i=0; i<10; ++i)
-        effects[WeaknessToFire+i] = ResistMagicka;
-
-    effects[Burden] = ResistMagicka;
-    effects[Charm] = ResistMagicka;
-    effects[Silence] = ResistMagicka;
-    effects[Blind] = ResistMagicka;
-    effects[Sound] = ResistMagicka;
-
-    for (int i=0; i<2; ++i)
+    static std::map<short, short> effects;
+    if (effects.empty())
     {
-        effects[CalmHumanoid] = ResistMagicka;
-        effects[FrenzyHumanoid] = ResistMagicka;
-        effects[DemoralizeHumanoid] = ResistMagicka;
-        effects[RallyHumanoid] = ResistMagicka;
+        effects[DisintegrateArmor] = Sanctuary;
+        effects[DisintegrateWeapon] = Sanctuary;
+
+        for (int i=0; i<5; ++i)
+            effects[DrainAttribute+i] = ResistMagicka;
+        for (int i=0; i<5; ++i)
+            effects[DamageAttribute+i] = ResistMagicka;
+        for (int i=0; i<5; ++i)
+            effects[AbsorbAttribute+i] = ResistMagicka;
+        for (int i=0; i<10; ++i)
+            effects[WeaknessToFire+i] = ResistMagicka;
+
+        effects[Burden] = ResistMagicka;
+        effects[Charm] = ResistMagicka;
+        effects[Silence] = ResistMagicka;
+        effects[Blind] = ResistMagicka;
+        effects[Sound] = ResistMagicka;
+
+        for (int i=0; i<2; ++i)
+        {
+            effects[CalmHumanoid+i] = ResistMagicka;
+            effects[FrenzyHumanoid+i] = ResistMagicka;
+            effects[DemoralizeHumanoid+i] = ResistMagicka;
+            effects[RallyHumanoid+i] = ResistMagicka;
+        }
+
+        effects[TurnUndead] = ResistMagicka;
+
+        effects[FireDamage] = ResistFire;
+        effects[FrostDamage] = ResistFrost;
+        effects[ShockDamage] = ResistShock;
+        effects[Vampirism] = ResistCommonDisease;
+        effects[Corprus] = ResistCorprusDisease;
+        effects[Poison] = ResistPoison;
+        effects[Paralyze] = ResistParalysis;
     }
-
-    effects[TurnUndead] = ResistMagicka;
-
-    effects[FireDamage] = ResistFire;
-    effects[FrostDamage] = ResistFrost;
-    effects[ShockDamage] = ResistShock;
-    effects[Vampirism] = ResistCommonDisease;
-    effects[Corprus] = ResistCorprusDisease;
-    effects[Poison] = ResistPoison;
-    effects[Paralyze] = ResistParalysis;
 
     if (effects.find(effect) != effects.end())
         return effects[effect];
@@ -322,42 +322,43 @@ short MagicEffect::getResistanceEffect(short effect)
 
 short MagicEffect::getWeaknessEffect(short effect)
 {
-    std::map<short, short> effects;
-
-    for (int i=0; i<5; ++i)
-        effects[DrainAttribute+i] = WeaknessToMagicka;
-    for (int i=0; i<5; ++i)
-        effects[DamageAttribute+i] = WeaknessToMagicka;
-    for (int i=0; i<5; ++i)
-        effects[AbsorbAttribute+i] = WeaknessToMagicka;
-    for (int i=0; i<10; ++i)
-        effects[WeaknessToFire+i] = WeaknessToMagicka;
-
-    effects[Burden] = WeaknessToMagicka;
-    effects[Charm] = WeaknessToMagicka;
-    effects[Silence] = WeaknessToMagicka;
-    effects[Blind] = WeaknessToMagicka;
-    effects[Sound] = WeaknessToMagicka;
-
-    for (int i=0; i<2; ++i)
+    static std::map<short, short> effects;
+    if (effects.empty())
     {
-        effects[CalmHumanoid] = WeaknessToMagicka;
-        effects[FrenzyHumanoid] = WeaknessToMagicka;
-        effects[DemoralizeHumanoid] = WeaknessToMagicka;
-        effects[RallyHumanoid] = WeaknessToMagicka;
+        for (int i=0; i<5; ++i)
+            effects[DrainAttribute+i] = WeaknessToMagicka;
+        for (int i=0; i<5; ++i)
+            effects[DamageAttribute+i] = WeaknessToMagicka;
+        for (int i=0; i<5; ++i)
+            effects[AbsorbAttribute+i] = WeaknessToMagicka;
+        for (int i=0; i<10; ++i)
+            effects[WeaknessToFire+i] = WeaknessToMagicka;
+
+        effects[Burden] = WeaknessToMagicka;
+        effects[Charm] = WeaknessToMagicka;
+        effects[Silence] = WeaknessToMagicka;
+        effects[Blind] = WeaknessToMagicka;
+        effects[Sound] = WeaknessToMagicka;
+
+        for (int i=0; i<2; ++i)
+        {
+            effects[CalmHumanoid+i] = WeaknessToMagicka;
+            effects[FrenzyHumanoid+i] = WeaknessToMagicka;
+            effects[DemoralizeHumanoid+i] = WeaknessToMagicka;
+            effects[RallyHumanoid+i] = WeaknessToMagicka;
+        }
+
+        effects[TurnUndead] = WeaknessToMagicka;
+
+        effects[FireDamage] = WeaknessToFire;
+        effects[FrostDamage] = WeaknessToFrost;
+        effects[ShockDamage] = WeaknessToShock;
+        effects[Vampirism] = WeaknessToCommonDisease;
+        effects[Corprus] = WeaknessToCorprusDisease;
+        effects[Poison] = WeaknessToPoison;
+
+        effects[Paralyze] = -1;
     }
-
-    effects[TurnUndead] = WeaknessToMagicka;
-
-    effects[FireDamage] = WeaknessToFire;
-    effects[FrostDamage] = WeaknessToFrost;
-    effects[ShockDamage] = WeaknessToShock;
-    effects[Vampirism] = WeaknessToCommonDisease;
-    effects[Corprus] = WeaknessToCorprusDisease;
-    effects[Poison] = WeaknessToPoison;
-
-    // Weakness to magicka or -1 ?
-    effects[Paralyze] = WeaknessToMagicka;
 
     if (effects.find(effect) != effects.end())
         return effects[effect];
@@ -384,6 +385,7 @@ static std::map<short,std::string> genNameMap()
     names[131] ="sEffectBoundGloves";
     names[128] ="sEffectBoundHelm";
     names[125] ="sEffectBoundLongbow";
+    names[126] ="sEffectExtraSpell";
     names[121] ="sEffectBoundLongsword";
     names[122] ="sEffectBoundMace";
     names[130] ="sEffectBoundShield";
@@ -525,7 +527,7 @@ const std::string &MagicEffect::effectIdToString(short effectID)
 {
     std::map<short,std::string>::const_iterator name = sNames.find(effectID);
     if(name == sNames.end())
-        throw std::runtime_error(std::string("Unimplemented effect ID ")+boost::lexical_cast<std::string>(effectID));
+        throw std::runtime_error(std::string("Unimplemented effect ID ")+std::to_string(effectID));
 
     return name->second;
 }

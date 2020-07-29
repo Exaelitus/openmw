@@ -20,13 +20,13 @@ ESM_Context ESMReader::getContext()
 }
 
 ESMReader::ESMReader()
-    : mIdx(0)
-    , mRecordFlags(0)
+    : mRecordFlags(0)
     , mBuffer(50*1024)
-    , mGlobalReaderList(NULL)
-    , mEncoder(NULL)
+    , mGlobalReaderList(nullptr)
+    , mEncoder(nullptr)
     , mFileSize(0)
 {
+    clearCtx();
 }
 
 int ESMReader::getFormat() const
@@ -50,13 +50,19 @@ void ESMReader::restoreContext(const ESM_Context &rc)
 void ESMReader::close()
 {
     mEsm.reset();
-    mCtx.filename.clear();
-    mCtx.leftFile = 0;
-    mCtx.leftRec = 0;
-    mCtx.leftSub = 0;
-    mCtx.subCached = false;
-    mCtx.recName.val = 0;
-    mCtx.subName.val = 0;
+    clearCtx();
+    mHeader.blank();
+}
+
+void ESMReader::clearCtx() 
+{
+   mCtx.filename.clear();
+   mCtx.leftFile = 0;
+   mCtx.leftRec = 0;
+   mCtx.leftSub = 0;
+   mCtx.subCached = false;
+   mCtx.recName.clear();
+   mCtx.subName.clear();
 }
 
 void ESMReader::openRaw(Files::IStreamPtr _esm, const std::string& name)
@@ -120,7 +126,7 @@ std::string ESMReader::getHString()
     // them. For some reason, they break the rules, and contain a byte
     // (value 0) even if the header says there is no data. If
     // Morrowind accepts it, so should we.
-    if (mCtx.leftSub == 0)
+    if (mCtx.leftSub == 0 && !mEsm->peek())
     {
         // Skip the following zero byte
         mCtx.leftRec--;
@@ -204,16 +210,18 @@ void ESMReader::getSubName()
     }
 
     // reading the subrecord data anyway.
-    getExact(mCtx.subName.name, 4);
-    mCtx.leftRec -= 4;
+    const size_t subNameSize = mCtx.subName.data_size();
+    getExact(mCtx.subName.rw_data(), subNameSize);
+    mCtx.leftRec -= subNameSize;
 }
 
 bool ESMReader::isEmptyOrGetName()
 {
     if (mCtx.leftRec)
     {
-        getExact(mCtx.subName.name, 4);
-        mCtx.leftRec -= 4;
+        const size_t subNameSize = mCtx.subName.data_size();
+        getExact(mCtx.subName.rw_data(), subNameSize);
+        mCtx.leftRec -= subNameSize;
         return false;
     }
     return true;
@@ -267,7 +275,7 @@ NAME ESMReader::getRecName()
     if (!hasMoreRecs())
         fail("No more records, getRecName() failed");
     getName(mCtx.recName);
-    mCtx.leftFile -= 4;
+    mCtx.leftFile -= mCtx.recName.data_size();
 
     // Make sure we don't carry over any old cached subrecord
     // names. This can happen in some cases when we skip parts of a

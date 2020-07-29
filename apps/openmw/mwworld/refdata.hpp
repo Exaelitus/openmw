@@ -2,11 +2,11 @@
 #define GAME_MWWORLD_REFDATA_H
 
 #include <components/esm/defs.hpp>
+#include <components/esm/animationstate.hpp>
 
 #include "../mwscript/locals.hpp"
 
 #include <string>
-#include <osg/Vec3f>
 
 namespace SceneUtil
 {
@@ -41,6 +41,8 @@ namespace MWWorld
             int mCount;
 
             ESM::Position mPosition;
+
+            ESM::AnimationState mAnimationState;
 
             CustomData *mCustomData;
 
@@ -132,6 +134,9 @@ namespace MWWorld
 
             bool hasChanged() const;
             ///< Has this RefData changed since it was originally loaded?
+
+            const ESM::AnimationState& getAnimationState() const;
+            ESM::AnimationState& getAnimationState();
     };
 }
 

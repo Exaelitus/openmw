@@ -21,8 +21,9 @@ void ESM::Player::load (ESMReader &esm)
     else
         mHasMark = false;
 
-    mAutoMove = 0;
-    esm.getHNOT (mAutoMove, "AMOV");
+    // Automove, no longer used.
+    if (esm.isNextSub("AMOV"))
+        esm.skipHSub();
 
     mBirthsign = esm.getHNString ("SIGN");
 
@@ -31,12 +32,25 @@ void ESM::Player::load (ESMReader &esm)
     mPaidCrimeId = -1;
     esm.getHNOT (mPaidCrimeId, "PAYD");
 
+    bool checkPrevItems = true;
+    while (checkPrevItems)
+    {
+        std::string boundItemId = esm.getHNOString("BOUN");
+        std::string prevItemId = esm.getHNOString("PREV");
+
+        if (!boundItemId.empty())
+            mPreviousItems[boundItemId] = prevItemId;
+        else
+            checkPrevItems = false;
+    }
+
+    bool intFallback = esm.getFormat() < 11;
     if (esm.hasMoreSubs())
     {
         for (int i=0; i<ESM::Attribute::Length; ++i)
-            mSaveAttributes[i].load(esm);
+            mSaveAttributes[i].load(esm, intFallback);
         for (int i=0; i<ESM::Skill::Length; ++i)
-            mSaveSkills[i].load(esm);
+            mSaveSkills[i].load(esm, intFallback);
     }
 }
 
@@ -46,7 +60,7 @@ void ESM::Player::save (ESMWriter &esm) const
 
     mCellId.save (esm);
 
-    esm.writeHNT ("LKEP", mLastKnownExteriorPosition, 12);
+    esm.writeHNT ("LKEP", mLastKnownExteriorPosition);
 
     if (mHasMark)
     {
@@ -54,13 +68,16 @@ void ESM::Player::save (ESMWriter &esm) const
         mMarkedCell.save (esm);
     }
 
-    if (mAutoMove)
-        esm.writeHNT ("AMOV", mAutoMove);
-
     esm.writeHNString ("SIGN", mBirthsign);
 
     esm.writeHNT ("CURD", mCurrentCrimeId);
     esm.writeHNT ("PAYD", mPaidCrimeId);
+
+    for (PreviousItems::const_iterator it=mPreviousItems.begin(); it != mPreviousItems.end(); ++it)
+    {
+        esm.writeHNString ("BOUN", it->first);
+        esm.writeHNString ("PREV", it->second);
+    }
 
     for (int i=0; i<ESM::Attribute::Length; ++i)
         mSaveAttributes[i].save(esm);

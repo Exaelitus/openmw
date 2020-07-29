@@ -3,13 +3,13 @@
 
 #include <string>
 
-#include <boost/shared_ptr.hpp>
 #include <boost/filesystem/path.hpp>
 
 #include <QUndoStack>
 #include <QObject>
 #include <QTimer>
 
+#include <components/files/multidircollection.hpp>
 #include <components/to_utf8/to_utf8.hpp>
 
 #include "../world/data.hpp"
@@ -60,7 +60,6 @@ namespace CSMDoc
 
         private:
 
-            const VFS::Manager* mVFS;
             boost::filesystem::path mSavePath;
             std::vector<boost::filesystem::path> mContentFiles;
             bool mNew;
@@ -70,7 +69,6 @@ namespace CSMDoc
             Saving mSavingOperation;
             OperationHolder mSaving;
             boost::filesystem::path mResDir;
-            const Fallback::Map* mFallbackMap;
             Blacklist mBlacklist;
             Runner mRunner;
             bool mDirty;
@@ -103,20 +101,19 @@ namespace CSMDoc
 
         public:
 
-            Document (const VFS::Manager* vfs, const Files::ConfigurationManager& configuration,
+            Document (const Files::ConfigurationManager& configuration,
                 const std::vector< boost::filesystem::path >& files, bool new_,
                 const boost::filesystem::path& savePath, const boost::filesystem::path& resDir,
-                const Fallback::Map* fallback,
-                ToUTF8::FromType encoding, const CSMWorld::ResourcesManager& resourcesManager,
-                const std::vector<std::string>& blacklistedScripts);
+                ToUTF8::FromType encoding, const std::vector<std::string>& blacklistedScripts,
+                bool fsStrict, const Files::PathContainer& dataPaths, const std::vector<std::string>& archives);
 
             ~Document();
-
-            const VFS::Manager* getVFS() const;
 
             QUndoStack& getUndoStack();
 
             int getState() const;
+
+            const boost::filesystem::path& getResourceDir() const;
 
             const boost::filesystem::path& getSavePath() const;
 
@@ -137,7 +134,7 @@ namespace CSMDoc
 
             void runSearch (const CSMWorld::UniversalId& searchId, const CSMTools::Search& search);
 
-            void runMerge (std::auto_ptr<CSMDoc::Document> target);
+            void runMerge (std::unique_ptr<CSMDoc::Document> target);
 
             void abortOperation (int type);
 
@@ -171,13 +168,15 @@ namespace CSMDoc
             /// document. This signal must be handled to avoid a leak.
             void mergeDone (CSMDoc::Document *document);
 
+            void operationDone (int type, bool failed);
+
         private slots:
 
             void modificationStateChanged (bool clean);
 
             void reportMessage (const CSMDoc::Message& message, int type);
 
-            void operationDone (int type, bool failed);
+            void operationDone2 (int type, bool failed);
 
             void runStateChanged();
 

@@ -55,6 +55,12 @@ namespace ESSImport
         unsigned char mCorpseClearCountdown; // hours?
         unsigned char mUnknown3[71];
     };
+    struct ANIS
+    {
+        unsigned char mGroupIndex;
+        unsigned char mUnknown[3];
+        float mTime;
+    };
 #pragma pack(pop)
 
     struct ActorData : public ESM::CellRef
@@ -77,7 +83,12 @@ namespace ESSImport
 
         SCRI mSCRI;
 
-        void load(ESM::ESMReader& esm);
+        bool mHasANIS;
+        ANIS mANIS; // scripted animation state
+
+        virtual void load(ESM::ESMReader& esm);
+
+        virtual ~ActorData() = default;
     };
 
 }

@@ -1,6 +1,5 @@
 #include "guiextensions.hpp"
 
-#include <components/compiler/extensions.hpp>
 #include <components/compiler/opcodes.hpp>
 
 #include <components/interpreter/interpreter.hpp>
@@ -57,7 +56,7 @@ namespace MWScript
 
                 if (bed.isEmpty() || !MWBase::Environment::get().getMechanicsManager()->sleepInBed(MWMechanics::getPlayer(),
                                                                              bed))
-                    MWBase::Environment::get().getWindowManager()->pushGuiMode(MWGui::GM_RestBed);
+                    MWBase::Environment::get().getWindowManager()->pushGuiMode(MWGui::GM_Rest, bed);
             }
         };
 
@@ -209,7 +208,7 @@ namespace MWScript
         public:
             virtual void execute(Interpreter::Runtime &runtime)
             {
-                bool state = MWBase::Environment::get().getWindowManager()->toggleGui();
+                bool state = MWBase::Environment::get().getWindowManager()->toggleHud();
                 runtime.getContext().report(state ? "GUI -> On" : "GUI -> Off");
 
                 if (!state)

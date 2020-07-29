@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QIcon>
 #include <QPushButton>
+#include <QScreen>
 
 QPushButton *CSVDoc::StartupDialogue::addButton (const QString& label, const QIcon& icon)
 {
@@ -106,7 +107,7 @@ CSVDoc::StartupDialogue::StartupDialogue() : mWidth (0), mColumn (2)
 
     /// \todo remove this label once we are feature complete and convinced that this thing is
     /// working properly.
-    QLabel *warning = new QLabel ("<font color=Red>WARNING: OpenMW-CS is in alpha stage.<p>The editor is not feature complete and not sufficiently tested.<br>In theory your data should be safe. But we strongly advice to make backups regularly if you are working with live data.</font color>");
+    QLabel *warning = new QLabel ("<font color=Red>WARNING: OpenMW-CS is in alpha stage.<p>The editor is not feature complete and not sufficiently tested.<br>In theory your data should be safe. But we strongly advise to make backups regularly if you are working with live data.</font color>");
 
     QFont font;
     font.setPointSize (12);
@@ -119,7 +120,7 @@ CSVDoc::StartupDialogue::StartupDialogue() : mWidth (0), mColumn (2)
 
     setLayout (layout);
 
-    QRect scr = QApplication::desktop()->screenGeometry();
+    QRect scr = QGuiApplication::primaryScreen()->geometry();
     QRect rect = geometry();
     move (scr.center().x() - rect.center().x(), scr.center().y() - rect.center().y());
 }

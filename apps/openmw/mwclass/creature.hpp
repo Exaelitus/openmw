@@ -44,11 +44,10 @@ namespace MWClass
             ///< Add reference into a cell for rendering
 
             virtual std::string getName (const MWWorld::ConstPtr& ptr) const;
-            ///< \return name (the one that is to be presented to the user; not the internal one);
-            /// can return an empty string.
+            ///< \return name or ID; can return an empty string.
 
             virtual bool hasToolTip(const MWWorld::ConstPtr& ptr) const;
-            ///< @return true if this object has a tooltip when focused (default implementation: false)
+            ///< @return true if this object has a tooltip when focused (default implementation: true)
 
             virtual MWGui::ToolTipInfo getToolTipInfo (const MWWorld::ConstPtr& ptr, int count) const;
             ///< @return the content of the tool tip to be displayed. raises exception if the object has no tooltip.
@@ -58,9 +57,9 @@ namespace MWClass
 
             virtual void hit(const MWWorld::Ptr& ptr, float attackStrength, int type) const;
 
-            virtual void onHit(const MWWorld::Ptr &ptr, float damage, bool ishealth, const MWWorld::Ptr &object, const MWWorld::Ptr &attacker, bool successful) const;
+            virtual void onHit(const MWWorld::Ptr &ptr, float damage, bool ishealth, const MWWorld::Ptr &object, const MWWorld::Ptr &attacker, const osg::Vec3f &hitPosition, bool successful) const;
 
-            virtual boost::shared_ptr<MWWorld::Action> activate (const MWWorld::Ptr& ptr,
+            virtual std::shared_ptr<MWWorld::Action> activate (const MWWorld::Ptr& ptr,
                 const MWWorld::Ptr& actor) const;
             ///< Generate action for activation
 
@@ -104,17 +103,12 @@ namespace MWClass
             virtual void getModelsToPreload(const MWWorld::Ptr& ptr, std::vector<std::string>& models) const;
             ///< Get a list of models to preload that this object may use (directly or indirectly). default implementation: list getModel().
 
-            virtual bool
-            isActor() const {
-                return true;
-            }
-
             virtual bool isBipedal (const MWWorld::ConstPtr &ptr) const;
             virtual bool canFly (const MWWorld::ConstPtr &ptr) const;
             virtual bool canSwim (const MWWorld::ConstPtr &ptr) const;
             virtual bool canWalk (const MWWorld::ConstPtr &ptr) const;
 
-            virtual int getSkill(const MWWorld::Ptr &ptr, int skill) const;
+            virtual float getSkill(const MWWorld::Ptr &ptr, int skill) const;
 
             /// Get a blood texture suitable for \a ptr (see Blood Texture 0-2 in Morrowind.ini)
             virtual int getBloodTexture (const MWWorld::ConstPtr& ptr) const;
@@ -135,6 +129,16 @@ namespace MWClass
 
             virtual void adjustScale(const MWWorld::ConstPtr& ptr, osg::Vec3f& scale, bool rendering) const;
             /// @param rendering Indicates if the scale to adjust is for the rendering mesh, or for the collision mesh
+
+            virtual void setBaseAISetting(const std::string& id, MWMechanics::CreatureStats::AiSetting setting, int value) const;
+
+            virtual void modifyBaseInventory(const std::string& actorId, const std::string& itemId, int amount) const;
+
+            float getWalkSpeed(const MWWorld::Ptr& ptr) const final;
+
+            float getRunSpeed(const MWWorld::Ptr& ptr) const final;
+
+            float getSwimSpeed(const MWWorld::Ptr& ptr) const final;
     };
 }
 

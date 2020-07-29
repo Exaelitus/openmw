@@ -4,6 +4,7 @@
 #include <osg/TriangleFunctor>
 #include <osg/Transform>
 #include <osg/Drawable>
+#include <osg/Version>
 
 #include <BulletCollision/CollisionShapes/btTriangleMesh.h>
 
@@ -23,7 +24,7 @@ namespace Resource
 struct GetTriangleFunctor
 {
     GetTriangleFunctor()
-        : mTriMesh(NULL)
+        : mTriMesh(nullptr)
     {
     }
 
@@ -42,7 +43,11 @@ struct GetTriangleFunctor
         return btVector3(vec.x(), vec.y(), vec.z());
     }
 
+#if OSG_MIN_VERSION_REQUIRED(3,5,6)
+    void inline operator()( const osg::Vec3 v1, const osg::Vec3 v2, const osg::Vec3 v3 )
+#else
     void inline operator()( const osg::Vec3 v1, const osg::Vec3 v2, const osg::Vec3 v3, bool _temp )
+#endif
     {
         if (mTriMesh)
             mTriMesh->addTriangle( toBullet(mMatrix.preMult(v1)), toBullet(mMatrix.preMult(v2)), toBullet(mMatrix.preMult(v3)));
@@ -58,7 +63,7 @@ class NodeToShapeVisitor : public osg::NodeVisitor
 public:
     NodeToShapeVisitor()
         : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
-        , mTriangleMesh(NULL)
+        , mTriangleMesh(nullptr)
     {
 
     }
@@ -66,11 +71,11 @@ public:
     virtual void apply(osg::Drawable &drawable)
     {
         if (!mTriangleMesh)
-            mTriangleMesh = new btTriangleMesh;
+            mTriangleMesh.reset(new btTriangleMesh);
 
         osg::Matrixf worldMat = osg::computeLocalToWorld(getNodePath());
         osg::TriangleFunctor<GetTriangleFunctor> functor;
-        functor.setTriMesh(mTriangleMesh);
+        functor.setTriMesh(mTriangleMesh.get());
         functor.setMatrix(worldMat);
         drawable.accept(functor);
     }
@@ -81,14 +86,12 @@ public:
             return osg::ref_ptr<BulletShape>();
 
         osg::ref_ptr<BulletShape> shape (new BulletShape);
-        TriangleMeshShape* meshShape = new TriangleMeshShape(mTriangleMesh, true);
-        shape->mCollisionShape = meshShape;
-        mTriangleMesh = NULL;
+        shape->mCollisionShape = new TriangleMeshShape(mTriangleMesh.release(), true);
         return shape;
     }
 
 private:
-    btTriangleMesh* mTriangleMesh;
+    std::unique_ptr<btTriangleMesh> mTriangleMesh;
 };
 
 BulletShapeManager::BulletShapeManager(const VFS::Manager* vfs, SceneManager* sceneMgr, NifFileManager* nifFileManager)
@@ -124,7 +127,7 @@ osg::ref_ptr<const BulletShape> BulletShapeManager::getShape(const std::string &
         if (ext == "nif")
         {
             NifBullet::BulletNifLoader loader;
-            shape = loader.load(mNifFileManager->get(normalized));
+            shape = loader.load(*mNifFileManager->get(normalized));
         }
         else
         {
@@ -136,10 +139,7 @@ osg::ref_ptr<const BulletShape> BulletShapeManager::getShape(const std::string &
             node->accept(visitor);
             shape = visitor.getShape();
             if (!shape)
-            {
-                mCache->addEntryToObjectCache(normalized, NULL);
                 return osg::ref_ptr<BulletShape>();
-            }
         }
 
         mCache->addEntryToObjectCache(normalized, shape);
@@ -153,7 +153,8 @@ osg::ref_ptr<BulletShapeInstance> BulletShapeManager::cacheInstance(const std::s
     mVFS->normalizeFilename(normalized);
 
     osg::ref_ptr<BulletShapeInstance> instance = createInstance(normalized);
-    mInstanceCache->addEntryToObjectCache(normalized, instance.get());
+    if (instance)
+        mInstanceCache->addEntryToObjectCache(normalized, instance.get());
     return instance;
 }
 
@@ -183,6 +184,19 @@ void BulletShapeManager::updateCache(double referenceTime)
     ResourceManager::updateCache(referenceTime);
 
     mInstanceCache->removeUnreferencedObjectsInCache();
+}
+
+void BulletShapeManager::clearCache()
+{
+    ResourceManager::clearCache();
+
+    mInstanceCache->clear();
+}
+
+void BulletShapeManager::reportStats(unsigned int frameNumber, osg::Stats *stats) const
+{
+    stats->setAttribute(frameNumber, "Shape", mCache->getCacheSize());
+    stats->setAttribute(frameNumber, "Shape Instance", mInstanceCache->getCacheSize());
 }
 
 }

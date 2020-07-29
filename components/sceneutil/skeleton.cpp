@@ -3,9 +3,8 @@
 #include <osg/Transform>
 #include <osg/MatrixTransform>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/stringops.hpp>
-
-#include <iostream>
 
 namespace SceneUtil
 {
@@ -36,10 +35,9 @@ private:
 Skeleton::Skeleton()
     : mBoneCacheInit(false)
     , mNeedToUpdateBoneMatrices(true)
-    , mActive(true)
+    , mActive(Active)
     , mLastFrameNumber(0)
-    , mTraversedEvenFrame(false)
-    , mTraversedOddFrame(false)
+    , mLastCullFrameNumber(0)
 {
 
 }
@@ -50,8 +48,7 @@ Skeleton::Skeleton(const Skeleton &copy, const osg::CopyOp &copyop)
     , mNeedToUpdateBoneMatrices(true)
     , mActive(copy.mActive)
     , mLastFrameNumber(0)
-    , mTraversedEvenFrame(false)
-    , mTraversedOddFrame(false)
+    , mLastCullFrameNumber(0)
 {
 
 }
@@ -67,7 +64,7 @@ Bone* Skeleton::getBone(const std::string &name)
 
     BoneCache::iterator found = mBoneCache.find(Misc::StringUtils::lowerCase(name));
     if (found == mBoneCache.end())
-        return NULL;
+        return nullptr;
 
     // find or insert in the bone hierarchy
 
@@ -84,7 +81,7 @@ Bone* Skeleton::getBone(const std::string &name)
         if (!matrixTransform)
             continue;
 
-        Bone* child = NULL;
+        Bone* child = nullptr;
         for (unsigned int i=0; i<bone->mChildren.size(); ++i)
         {
             if (bone->mChildren[i]->mNode == *it)
@@ -108,54 +105,69 @@ Bone* Skeleton::getBone(const std::string &name)
     return bone;
 }
 
-void Skeleton::updateBoneMatrices(osg::NodeVisitor* nv)
+void Skeleton::updateBoneMatrices(unsigned int traversalNumber)
 {
-    if (nv->getTraversalNumber() != mLastFrameNumber)
+    if (traversalNumber != mLastFrameNumber)
         mNeedToUpdateBoneMatrices = true;
 
-    mLastFrameNumber = nv->getTraversalNumber();
-
-    if (mLastFrameNumber % 2 == 0)
-        mTraversedEvenFrame = true;
-    else
-        mTraversedOddFrame = true;
+    mLastFrameNumber = traversalNumber;
 
     if (mNeedToUpdateBoneMatrices)
     {
         if (mRootBone.get())
         {
             for (unsigned int i=0; i<mRootBone->mChildren.size(); ++i)
-                mRootBone->mChildren[i]->update(NULL);
+                mRootBone->mChildren[i]->update(nullptr);
         }
-        else
-            std::cerr << "no root bone" << std::endl;
 
         mNeedToUpdateBoneMatrices = false;
     }
 }
 
-void Skeleton::setActive(bool active)
+void Skeleton::setActive(ActiveType active)
 {
     mActive = active;
 }
 
 bool Skeleton::getActive() const
 {
-    return mActive;
+    return mActive != Inactive;
+}
+
+void Skeleton::markDirty()
+{
+    mLastFrameNumber = 0;
+    mBoneCache.clear();
+    mBoneCacheInit = false;
 }
 
 void Skeleton::traverse(osg::NodeVisitor& nv)
 {
-    if (!getActive() && nv.getVisitorType() == osg::NodeVisitor::UPDATE_VISITOR
-            // need to process at least 2 frames before shutting off update, since we need to have both frame-alternating RigGeometries initialized
-            // this would be more naturally handled if the double-buffering was implemented in RigGeometry itself rather than in a FrameSwitch decorator node
-            && mLastFrameNumber != 0 && mTraversedEvenFrame && mTraversedOddFrame)
-        return;
+    if (nv.getVisitorType() == osg::NodeVisitor::UPDATE_VISITOR)
+    {
+        if (mActive == Inactive && mLastFrameNumber != 0)
+            return;
+        if (mActive == SemiActive && mLastFrameNumber != 0 && mLastCullFrameNumber+3 <= nv.getTraversalNumber())
+            return;
+    }
+    else if (nv.getVisitorType() == osg::NodeVisitor::CULL_VISITOR)
+        mLastCullFrameNumber = nv.getTraversalNumber();
+
     osg::Group::traverse(nv);
 }
 
+void Skeleton::childInserted(unsigned int)
+{
+    markDirty();
+}
+
+void Skeleton::childRemoved(unsigned int, unsigned int)
+{
+    markDirty();
+}
+
 Bone::Bone()
-    : mNode(NULL)
+    : mNode(nullptr)
 {
 }
 
@@ -170,7 +182,7 @@ void Bone::update(const osg::Matrixf* parentMatrixInSkeletonSpace)
 {
     if (!mNode)
     {
-        std::cerr << "Bone without node " << std::endl;
+        Log(Debug::Error) << "Error: Bone without node";
         return;
     }
     if (parentMatrixInSkeletonSpace)

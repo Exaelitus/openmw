@@ -3,7 +3,6 @@
 #include <MyGUI_Gui.h>
 #include <MyGUI_Button.h>
 #include <MyGUI_ImageBox.h>
-#include <MyGUI_ScrollBar.h>
 
 namespace Gui
 {
@@ -72,6 +71,7 @@ namespace Gui
                 button->getSubWidgetText()->setTextAlign(MyGUI::Align::Left);
                 button->eventMouseWheel += MyGUI::newDelegate(this, &MWList::onMouseWheelMoved);
                 button->eventMouseButtonClick += MyGUI::newDelegate(this, &MWList::onItemSelected);
+                button->setNeedKeyFocus(true);
 
                 int height = button->getTextSize().height;
                 button->setSize(MyGUI::IntSize(button->getSize().width, height));

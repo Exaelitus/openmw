@@ -10,7 +10,7 @@ namespace ESM
 {
     // format 0, saved games only
 
-    struct NpcState : public ObjectState
+    struct NpcState final : public ObjectState
     {
         InventoryState mInventory;
         NpcStats mNpcStats;
@@ -19,8 +19,17 @@ namespace ESM
         /// Initialize to default state
         void blank();
 
-        virtual void load (ESMReader &esm);
-        virtual void save (ESMWriter &esm, bool inInventory = false) const;
+        void load (ESMReader &esm) final;
+        void save (ESMWriter &esm, bool inInventory = false) const final;
+
+        NpcState& asNpcState() final
+        {
+            return *this;
+        }
+        const NpcState& asNpcState() const final
+        {
+            return *this;
+        }
     };
 }
 

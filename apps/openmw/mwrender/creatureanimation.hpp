@@ -1,7 +1,7 @@
 #ifndef GAME_RENDER_CREATUREANIMATION_H
 #define GAME_RENDER_CREATUREANIMATION_H
 
-#include "animation.hpp"
+#include "actoranimation.hpp"
 #include "weaponanimation.hpp"
 #include "../mwworld/inventorystore.hpp"
 
@@ -12,7 +12,7 @@ namespace MWWorld
 
 namespace MWRender
 {
-    class CreatureAnimation : public Animation
+    class CreatureAnimation : public ActorAnimation
     {
     public:
         CreatureAnimation(const MWWorld::Ptr &ptr, const std::string& model, Resource::ResourceSystem* resourceSystem);
@@ -22,7 +22,7 @@ namespace MWRender
     // For creatures with weapons and shields
     // Animation is already virtual anyway, so might as well make a separate class.
     // Most creatures don't need weapons/shields, so this will save some memory.
-    class CreatureWeaponAnimation : public Animation, public WeaponAnimation, public MWWorld::InventoryStoreListener
+    class CreatureWeaponAnimation : public ActorAnimation, public WeaponAnimation, public MWWorld::InventoryStoreListener
     {
     public:
         CreatureWeaponAnimation(const MWWorld::Ptr &ptr, const std::string& model, Resource::ResourceSystem* resourceSystem);
@@ -31,6 +31,8 @@ namespace MWRender
         virtual void equipmentChanged() { updateParts(); }
 
         virtual void showWeapons(bool showWeapon);
+
+        virtual bool getCarriedLeftShown() const { return mShowCarriedLeft; }
         virtual void showCarriedLeft(bool show);
 
         void updateParts();
@@ -44,7 +46,7 @@ namespace MWRender
         virtual osg::Node* getWeaponNode();
         virtual Resource::ResourceSystem* getResourceSystem();
         virtual void showWeapon(bool show) { showWeapons(show); }
-        virtual void setWeaponGroup(const std::string& group) { mWeaponAnimationTime->setGroup(group); }
+        virtual void setWeaponGroup(const std::string& group, bool relativeDuration) { mWeaponAnimationTime->setGroup(group, relativeDuration); }
 
         virtual void addControllers();
 
@@ -54,6 +56,8 @@ namespace MWRender
         /// to indicate the facing orientation of the character.
         virtual void setPitchFactor(float factor) { mPitchFactor = factor; }
 
+    protected:
+        virtual bool isArrowAttached() const;
 
     private:
         PartHolderPtr mWeapon;
@@ -61,7 +65,7 @@ namespace MWRender
         bool mShowWeapons;
         bool mShowCarriedLeft;
 
-        boost::shared_ptr<WeaponAnimationTime> mWeaponAnimationTime;
+        std::shared_ptr<WeaponAnimationTime> mWeaponAnimationTime;
     };
 }
 

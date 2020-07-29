@@ -1,20 +1,49 @@
 #include "windowbase.hpp"
 
+#include <MyGUI_Button.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
-
-#include <components/settings/settings.hpp>
 
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/environment.hpp"
 
+#include <components/widgets/imagebutton.hpp>
+
 #include "draganddrop.hpp"
+#include "exposedwindow.hpp"
 
 using namespace MWGui;
 
 WindowBase::WindowBase(const std::string& parLayout)
   : Layout(parLayout)
 {
+    mMainWidget->setVisible(false);
+
+    Window* window = mMainWidget->castType<Window>(false);
+    if (!window)
+        return;
+
+    MyGUI::Button* button = nullptr;
+    MyGUI::VectorWidgetPtr widgets = window->getSkinWidgetsByName("Action");
+    for (MyGUI::Widget* widget : widgets)
+    {
+        if (widget->isUserString("SupportDoubleClick"))
+            button = widget->castType<MyGUI::Button>();
+    }
+
+    if (button)
+        button->eventMouseButtonDoubleClick += MyGUI::newDelegate(this, &WindowBase::onDoubleClick);
+}
+
+void WindowBase::onTitleDoubleClicked()
+{
+    if (MyGUI::InputManager::getInstance().isShiftPressed())
+        MWBase::Environment::get().getWindowManager()->toggleMaximized(this);
+}
+
+void WindowBase::onDoubleClick(MyGUI::Widget *_sender)
+{
+    onTitleDoubleClicked();
 }
 
 void WindowBase::setVisible(bool visible)
@@ -23,21 +52,9 @@ void WindowBase::setVisible(bool visible)
     mMainWidget->setVisible(visible);
 
     if (visible)
-        open();
-    else if (wasVisible && !visible)
-        close();
-
-    // This is needed as invisible widgets can retain key focus.
-    // Remove for MyGUI 3.2.2
-    if (!visible)
-    {
-        MyGUI::Widget* keyFocus = MyGUI::InputManager::getInstance().getKeyFocusWidget();
-        while (keyFocus != mMainWidget && keyFocus != NULL)
-            keyFocus = keyFocus->getParent();
-
-        if (keyFocus == mMainWidget)
-            MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(NULL);
-    }
+        onOpen();
+    else if (wasVisible)
+        onClose();
 }
 
 bool WindowBase::isVisible()
@@ -64,27 +81,32 @@ WindowModal::WindowModal(const std::string& parLayout)
 {
 }
 
-void WindowModal::open()
+void WindowModal::onOpen()
 {
-    MyGUI::InputManager::getInstance ().addWidgetModal (mMainWidget);
     MWBase::Environment::get().getWindowManager()->addCurrentModal(this); //Set so we can escape it if needed
+
+    MyGUI::Widget* focus = MyGUI::InputManager::getInstance().getKeyFocusWidget();
+    MyGUI::InputManager::getInstance ().addWidgetModal (mMainWidget);
+    MyGUI::InputManager::getInstance().setKeyFocusWidget(focus);
 }
 
-void WindowModal::close()
+void WindowModal::onClose()
 {
-    MyGUI::InputManager::getInstance ().removeWidgetModal (mMainWidget);
     MWBase::Environment::get().getWindowManager()->removeCurrentModal(this);
+
+    MyGUI::InputManager::getInstance ().removeWidgetModal (mMainWidget);
 }
 
 NoDrop::NoDrop(DragAndDrop *drag, MyGUI::Widget *widget)
     : mWidget(widget), mDrag(drag), mTransparent(false)
 {
-    if (!mWidget)
-        throw std::runtime_error("NoDrop needs a non-NULL widget!");
 }
 
 void NoDrop::onFrame(float dt)
 {
+    if (!mWidget)
+        return;
+
     MyGUI::IntPoint mousePos = MyGUI::InputManager::getInstance().getMousePosition();
 
     if (mDrag->mIsOnDragAndDrop)
@@ -113,5 +135,33 @@ void NoDrop::onFrame(float dt)
 
 void NoDrop::setAlpha(float alpha)
 {
-    mWidget->setAlpha(alpha);
+    if (mWidget)
+        mWidget->setAlpha(alpha);
+}
+
+BookWindowBase::BookWindowBase(const std::string& parLayout)
+  : WindowBase(parLayout)
+{
+}
+
+float BookWindowBase::adjustButton (char const * name)
+{
+    Gui::ImageButton* button;
+    WindowBase::getWidget (button, name);
+    MyGUI::IntSize requested = button->getRequestedSize();
+    float scale = float(requested.height) / button->getSize().height;
+    MyGUI::IntSize newSize = requested;
+    newSize.width /= scale;
+    newSize.height /= scale;
+    button->setSize(newSize);
+
+    if (button->getAlign().isRight())
+    {
+        MyGUI::IntSize diff = (button->getSize() - requested);
+        diff.width /= scale;
+        diff.height /= scale;
+        button->setPosition(button->getPosition() + MyGUI::IntPoint(diff.width,0));
+    }
+
+    return scale;
 }

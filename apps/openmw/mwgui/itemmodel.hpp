@@ -13,7 +13,6 @@ namespace MWGui
     {
         ItemStack (const MWWorld::Ptr& base, ItemModel* creator, size_t count);
         ItemStack();
-        bool stacks (const ItemStack& other);
         ///< like operator==, only without checking mType
 
         enum Type
@@ -65,13 +64,16 @@ namespace MWGui
         /// @note Derived implementations may return an empty Ptr if the move was unsuccessful.
         virtual MWWorld::Ptr moveItem (const ItemStack& item, size_t count, ItemModel* otherModel);
 
-        /// @param setNewOwner If true, set the copied item's owner to the actor we are copying to,
-        ///                    otherwise reset owner to ""
-        virtual MWWorld::Ptr copyItem (const ItemStack& item, size_t count, bool setNewOwner=false) = 0;
+        virtual MWWorld::Ptr copyItem (const ItemStack& item, size_t count, bool allowAutoEquip = true) = 0;
         virtual void removeItem (const ItemStack& item, size_t count) = 0;
 
-        /// Is the player allowed to insert items into this model? (default true)
-        virtual bool allowedToInsertItems() const;
+        /// Is the player allowed to use items from this item model? (default true)
+        virtual bool allowedToUseItems() const;
+        virtual void onClose()
+        {
+        }
+        virtual bool onDropItem(const MWWorld::Ptr &item, int count);
+        virtual bool onTakeItem(const MWWorld::Ptr &item, int count);
 
     private:
         ItemModel(const ItemModel&);
@@ -85,7 +87,14 @@ namespace MWGui
     public:
         ProxyItemModel();
         virtual ~ProxyItemModel();
-        virtual MWWorld::Ptr copyItem (const ItemStack& item, size_t count, bool setNewOwner=false);
+
+        bool allowedToUseItems() const;
+
+        virtual void onClose();
+        virtual bool onDropItem(const MWWorld::Ptr &item, int count);
+        virtual bool onTakeItem(const MWWorld::Ptr &item, int count);
+
+        virtual MWWorld::Ptr copyItem (const ItemStack& item, size_t count, bool allowAutoEquip = true);
         virtual void removeItem (const ItemStack& item, size_t count);
         virtual ModelIndex getIndex (ItemStack item);
 

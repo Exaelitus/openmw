@@ -29,12 +29,13 @@ namespace MWMechanics
             // ----- used by the player only, maybe should be moved at some point -------
             int mBounty;
             int mWerewolfKills;
-            /// Used for the player only; NPCs have maximum one faction defined in their NPC record
+            /// Used only for the player and for NPC's with ranks, modified by scripts; other NPCs have maximum one faction defined in their NPC record
             std::map<std::string, int> mFactionRank;
             std::set<std::string> mExpelled;
             std::map<std::string, int> mFactionReputation;
             int mLevelProgress; // 0-10
-            std::vector<int> mSkillIncreases; // number of skill increases for each attribute
+            std::vector<int> mSkillIncreases; // number of skill increases for each attribute (resets after leveling up)
+            std::vector<int> mSpecIncreases; // number of skill increases for each specialization (accumulates throughout the entire game)
             std::set<std::string> mUsedIds;
             // ---------------------------------------------------------------------------
 
@@ -60,7 +61,9 @@ namespace MWMechanics
             SkillValue& getSkill (int index);
             void setSkill(int index, const SkillValue& value);
 
+            int getFactionRank(const std::string &faction) const;
             const std::map<std::string, int>& getFactionRanks() const;
+
             /// Increase the rank in this faction by 1, if such a rank exists.
             void raiseRank(const std::string& faction);
             /// Lower the rank in this faction by 1, if such a rank exists.
@@ -80,11 +83,13 @@ namespace MWMechanics
             void useSkill (int skillIndex, const ESM::Class& class_, int usageType = -1, float extraFactor=1.f);
             ///< Increase skill by usage.
 
-            void increaseSkill (int skillIndex, const ESM::Class& class_, bool preserveProgress);
+            void increaseSkill (int skillIndex, const ESM::Class& class_, bool preserveProgress, bool readBook = false);
 
             int getLevelProgress() const;
 
             int getLevelupAttributeMultiplier(int attribute) const;
+
+            int getSkillIncreasesForSpecialization(int spec) const;
 
             void levelUp();
 
@@ -122,8 +127,10 @@ namespace MWMechanics
             /// @param time value from [0,20]
             void setTimeToStartDrowning(float time);
 
+            void writeState (ESM::CreatureStats& state) const;
             void writeState (ESM::NpcStats& state) const;
 
+            void readState (const ESM::CreatureStats& state);
             void readState (const ESM::NpcStats& state);
     };
 }

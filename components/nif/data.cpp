@@ -1,9 +1,6 @@
 #include "data.hpp"
 #include "node.hpp"
 
-#include <osg/Array>
-#include <osg/PrimitiveSet>
-
 namespace Nif
 {
 void NiSkinInstance::read(NIFStream *nif)
@@ -26,52 +23,44 @@ void NiSkinInstance::post(NIFFile *nif)
     if(bnum != data->bones.size())
         nif->fail("Mismatch in NiSkinData bone count");
 
-    root->makeRootBone(&data->trafo);
-
     for(size_t i=0; i<bnum; i++)
     {
         if(bones[i].empty())
             nif->fail("Oops: Missing bone! Don't know how to handle this.");
-        bones[i]->makeBone(i, data->bones[i]);
+        bones[i]->setBone();
     }
 }
 
-void ShapeData::read(NIFStream *nif)
+void NiGeometryData::read(NIFStream *nif)
 {
     int verts = nif->getUShort();
 
-    vertices = new osg::Vec3Array;
-    if(nif->getInt())
+    if (nif->getBoolean())
         nif->getVector3s(vertices, verts);
 
-    normals = new osg::Vec3Array(osg::Array::BIND_PER_VERTEX);
-    if(nif->getInt())
+    if (nif->getBoolean())
         nif->getVector3s(normals, verts);
 
     center = nif->getVector3();
     radius = nif->getFloat();
 
-    colors = new osg::Vec4Array(osg::Array::BIND_PER_VERTEX);
-    if(nif->getInt())
+    if (nif->getBoolean())
         nif->getVector4s(colors, verts);
 
-    // Only the first 6 bits are used as a count. I think the rest are
-    // flags of some sort.
+    // In Morrowind this field only corresponds to the number of UV sets.
+    // NifTools research is inaccurate.
     int uvs = nif->getUShort();
-    uvs &= 0x3f;
 
     if(nif->getInt())
     {
         uvlist.resize(uvs);
         for(int i = 0;i < uvs;i++)
         {
-            osg::Vec2Array* list = uvlist[i] = new osg::Vec2Array(osg::Array::BIND_PER_VERTEX);
-            nif->getVector2s(list, verts);
-
+            nif->getVector2s(uvlist[i], verts);
             // flip the texture coordinates to convert them to the OpenGL convention of bottom-left image origin
-            for (unsigned int uv=0; uv<list->size(); ++uv)
+            for (unsigned int uv=0; uv<uvlist[i].size(); ++uv)
             {
-                (*list)[uv] = osg::Vec2((*list)[uv].x(), 1.f - (*list)[uv].y());
+                uvlist[i][uv] = osg::Vec2f(uvlist[i][uv].x(), 1.f - uvlist[i][uv].y());
             }
         }
     }
@@ -79,14 +68,13 @@ void ShapeData::read(NIFStream *nif)
 
 void NiTriShapeData::read(NIFStream *nif)
 {
-    ShapeData::read(nif);
+    NiGeometryData::read(nif);
 
     /*int tris =*/ nif->getUShort();
 
     // We have three times as many vertices as triangles, so this
     // is always equal to tris*3.
     int cnt = nif->getInt();
-    triangles = new osg::DrawElementsUShort(osg::PrimitiveSet::TRIANGLES);
     nif->getUShorts(triangles, cnt);
 
     // Read the match list, which lists the vertices that are equal to
@@ -101,9 +89,55 @@ void NiTriShapeData::read(NIFStream *nif)
     }
 }
 
+void NiTriStripsData::read(NIFStream *nif)
+{
+    NiGeometryData::read(nif);
+
+    // Every strip with n points defines n-2 triangles, so this should be unnecessary.
+    /*int tris =*/ nif->getUShort();
+    // Number of triangle strips
+    int numStrips = nif->getUShort();
+
+    std::vector<unsigned short> lengths;
+    nif->getUShorts(lengths, numStrips);
+
+    if (!numStrips)
+        return;
+
+    strips.resize(numStrips);
+    for (int i = 0; i < numStrips; i++)
+        nif->getUShorts(strips[i], lengths[i]);
+}
+
+void NiLinesData::read(NIFStream *nif)
+{
+    NiGeometryData::read(nif);
+    size_t num = vertices.size();
+    std::vector<char> flags;
+    nif->getChars(flags, num);
+    // Can't construct a line from a single vertex.
+    if (num < 2)
+        return;
+    // Convert connectivity flags into usable geometry. The last element needs special handling.
+    for (size_t i = 0; i < num-1; ++i)
+    {
+        if (flags[i] & 1)
+        {
+            lines.emplace_back(i);
+            lines.emplace_back(i+1);
+        }
+    }
+    // If there are just two vertices, they can be connected twice. Probably isn't critical.
+    if (flags[num-1] & 1)
+    {
+        lines.emplace_back(num-1);
+        lines.emplace_back(0);
+    }
+}
+
 void NiAutoNormalParticlesData::read(NIFStream *nif)
 {
-    ShapeData::read(nif);
+    NiGeometryData::read(nif);
 
     // Should always match the number of vertices
     numParticles = nif->getUShort();
@@ -111,11 +145,10 @@ void NiAutoNormalParticlesData::read(NIFStream *nif)
     particleRadius = nif->getFloat();
     activeCount = nif->getUShort();
 
-    if(nif->getInt())
+    if (nif->getBoolean())
     {
-        int numVerts = vertices->size();
         // Particle sizes
-        nif->getFloats(sizes, numVerts);
+        nif->getFloats(sizes, vertices.size());
     }
 }
 
@@ -123,17 +156,16 @@ void NiRotatingParticlesData::read(NIFStream *nif)
 {
     NiAutoNormalParticlesData::read(nif);
 
-    if(nif->getInt())
+    if (nif->getBoolean())
     {
-        int numVerts = vertices->size();
         // Rotation quaternions.
-        nif->getQuaternions(rotations, numVerts);
+        nif->getQuaternions(rotations, vertices.size());
     }
 }
 
 void NiPosData::read(NIFStream *nif)
 {
-    mKeyList.reset(new Vector3KeyMap);
+    mKeyList = std::make_shared<Vector3KeyMap>();
     mKeyList->read(nif);
 }
 
@@ -141,14 +173,14 @@ void NiUVData::read(NIFStream *nif)
 {
     for(int i = 0;i < 4;i++)
     {
-        mKeyList[i].reset(new FloatKeyMap);
+        mKeyList[i] = std::make_shared<FloatKeyMap>();
         mKeyList[i]->read(nif);
     }
 }
 
 void NiFloatData::read(NIFStream *nif)
 {
-    mKeyList.reset(new FloatKeyMap);
+    mKeyList = std::make_shared<FloatKeyMap>();
     mKeyList->read(nif);
 }
 
@@ -156,22 +188,20 @@ void NiPixelData::read(NIFStream *nif)
 {
     fmt = (Format)nif->getUInt();
 
-    rmask = nif->getInt(); // usually 0xff
-    gmask = nif->getInt(); // usually 0xff00
-    bmask = nif->getInt(); // usually 0xff0000
-    amask = nif->getInt(); // usually 0xff000000 or zero
+    for (unsigned int i = 0; i < 4; ++i)
+        colorMask[i] = nif->getUInt();
+    bpp = nif->getUInt();
 
-    bpp = nif->getInt();
+    // 8 bytes of "Old Fast Compare". Whatever that means.
+    nif->skip(8);
+    palette.read(nif);
 
-    // Unknown
-    nif->skip(12);
+    numberOfMipmaps = nif->getUInt();
 
-    mips = nif->getInt();
+    // Bytes per pixel, should be bpp / 8
+    /* int bytes = */ nif->getUInt();
 
-    // Bytes per pixel, should be bpp * 8
-    /* int bytes = */ nif->getInt();
-
-    for(int i=0; i<mips; i++)
+    for(unsigned int i=0; i<numberOfMipmaps; i++)
     {
         // Image size and offset in the following data field
         Mipmap m;
@@ -182,15 +212,19 @@ void NiPixelData::read(NIFStream *nif)
     }
 
     // Read the data
-    unsigned int dataSize = nif->getInt();
-    data.reserve(dataSize);
-    for (unsigned i=0; i<dataSize; ++i)
-        data.push_back((unsigned char)nif->getChar());
+    unsigned int numPixels = nif->getUInt();
+    if (numPixels)
+        nif->getUChars(data, numPixels);
+}
+
+void NiPixelData::post(NIFFile *nif)
+{
+    palette.post(nif);
 }
 
 void NiColorData::read(NIFStream *nif)
 {
-    mKeyMap.reset(new Vector4KeyMap);
+    mKeyMap = std::make_shared<Vector4KeyMap>();
     mKeyMap->read(nif);
 }
 
@@ -212,13 +246,12 @@ void NiSkinData::read(NIFStream *nif)
     trafo.scale = nif->getFloat();
 
     int boneNum = nif->getInt();
-    nif->getInt(); // -1
+    if (nif->getVersion() >= NIFFile::NIFVersion::VER_MW && nif->getVersion() <= NIFStream::generateVersion(10,1,0,0))
+        nif->skip(4); // NiSkinPartition link
 
     bones.resize(boneNum);
-    for(int i=0;i<boneNum;i++)
+    for (BoneInfo &bi : bones)
     {
-        BoneInfo &bi = bones[i];
-
         bi.trafo.rotation = nif->getMatrix3();
         bi.trafo.pos = nif->getVector3();
         bi.trafo.scale = nif->getFloat();
@@ -244,32 +277,41 @@ void NiMorphData::read(NIFStream *nif)
     mMorphs.resize(morphCount);
     for(int i = 0;i < morphCount;i++)
     {
-        mMorphs[i].mKeyFrames.reset(new FloatKeyMap);
+        mMorphs[i].mKeyFrames = std::make_shared<FloatKeyMap>();
         mMorphs[i].mKeyFrames->read(nif, true);
-        mMorphs[i].mVertices = new osg::Vec3Array;
         nif->getVector3s(mMorphs[i].mVertices, vertCount);
     }
 }
 
 void NiKeyframeData::read(NIFStream *nif)
 {
-    mRotations.reset(new QuaternionKeyMap);
+    mRotations = std::make_shared<QuaternionKeyMap>();
     mRotations->read(nif);
-    if(mRotations->mInterpolationType == Vector3KeyMap::sXYZInterpolation)
+    if(mRotations->mInterpolationType == InterpolationType_XYZ)
     {
         //Chomp unused float
         nif->getFloat();
-        mXRotations.reset(new FloatKeyMap);
-        mYRotations.reset(new FloatKeyMap);
-        mZRotations.reset(new FloatKeyMap);
+        mXRotations = std::make_shared<FloatKeyMap>();
+        mYRotations = std::make_shared<FloatKeyMap>();
+        mZRotations = std::make_shared<FloatKeyMap>();
         mXRotations->read(nif, true);
         mYRotations->read(nif, true);
         mZRotations->read(nif, true);
     }
-    mTranslations.reset(new Vector3KeyMap);
+    mTranslations = std::make_shared<Vector3KeyMap>();
     mTranslations->read(nif);
-    mScales.reset(new FloatKeyMap);
+    mScales = std::make_shared<FloatKeyMap>();
     mScales->read(nif);
+}
+
+void NiPalette::read(NIFStream *nif)
+{
+    unsigned int alphaMask = !nif->getChar() ? 0xFF000000 : 0;
+    // Fill the entire palette with black even if there isn't enough entries.
+    colors.resize(256);
+    unsigned int numEntries = nif->getUInt();
+    for (unsigned int i = 0; i < numEntries; i++)
+        colors[i] = nif->getUInt() | alphaMask;
 }
 
 } // Namespace

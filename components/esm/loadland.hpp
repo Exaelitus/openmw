@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include <OpenThreads/Mutex>
+#include <components/misc/constants.hpp>
 
 #include "esmcommon.hpp"
 
@@ -33,6 +33,8 @@ struct Land
 
     // File context. This allows the ESM reader to be 'reset' to this
     // location later when we are ready to load the full data set.
+    // In the editor, there may not be a file associated with the Land,
+    // in which case the filename will be empty.
     ESM_Context mContext;
 
     int mDataTypes;
@@ -53,7 +55,7 @@ struct Land
     static const int LAND_SIZE = 65;
 
     // cell terrain size in world coords
-    static const int REAL_SIZE = 8192;
+    static const int REAL_SIZE = Constants::CellSizeInUnits;
 
     // total number of vertices
     static const int LAND_NUM_VERTS = LAND_SIZE * LAND_SIZE;
@@ -65,6 +67,10 @@ struct Land
 
     //total number of textures per land
     static const int LAND_NUM_TEXTURES = LAND_TEXTURE_SIZE * LAND_TEXTURE_SIZE;
+
+    static const int LAND_GLOBAL_MAP_LOD_SIZE = 81;
+
+    static const int LAND_GLOBAL_MAP_LOD_SIZE_SQRT = 9;
 
 #pragma pack(push,1)
     struct VHGT
@@ -80,10 +86,22 @@ struct Land
 
     struct LandData
     {
+        LandData()
+            : mHeightOffset(0)
+            , mMinHeight(0)
+            , mMaxHeight(0)
+            , mUnk1(0)
+            , mUnk2(0)
+            , mDataLoaded(0)
+        {
+        }
+
         // Initial reference height for the first vertex, only needed for filling mHeights
         float mHeightOffset;
         // Height in world space for each vertex
         float mHeights[LAND_NUM_VERTS];
+        float mMinHeight;
+        float mMaxHeight;
 
         // 24-bit normals, these aren't always correct though. Edge and corner normals may be garbage.
         VNML mNormals[LAND_NUM_VERTS * 3];
@@ -96,38 +114,37 @@ struct Land
         // 24-bit RGB color for each vertex
         unsigned char mColours[3 * LAND_NUM_VERTS];
 
-        // DataTypes available in this LandData, accessing data that is not available is an undefined operation
-        int mDataTypes;
-
-        // low-LOD heightmap (used for rendering the global map)
-        signed char mWnam[81];
-
         // ???
         short mUnk1;
         uint8_t mUnk2;
 
-        void save(ESMWriter &esm) const;
-        static void transposeTextureData(const uint16_t *in, uint16_t *out);
+        int mDataLoaded;
     };
+
+    // low-LOD heightmap (used for rendering the global map)
+    signed char mWnam[LAND_GLOBAL_MAP_LOD_SIZE];
 
     void load(ESMReader &esm, bool &isDeleted);
     void save(ESMWriter &esm, bool isDeleted = false) const;
 
-    void blank() {}
+    void blank();
 
     /**
-     * Actually loads data
+     * Actually loads data into target
+     * If target is nullptr, assumed target is mLandData
      */
-    void loadData(int flags) const;
+    void loadData(int flags, LandData* target = nullptr) const;
 
     /**
-     * Frees memory allocated for land data
+     * Frees memory allocated for mLandData
      */
-    void unloadData();
+    void unloadData() const;
 
     /// Check if given data type is loaded
-    /// @note We only check data types that *can* be loaded (present in mDataTypes)
     bool isDataLoaded(int flags) const;
+
+    /// Sets the flags and creates a LandData if needed
+    void setDataLoaded(int flags);
 
         Land (const Land& land);
 
@@ -159,11 +176,7 @@ struct Land
         /// Loads data and marks it as loaded
         /// \return true if data is actually loaded from file, false otherwise
         /// including the case when data is already loaded
-        bool condLoad(ESM::ESMReader& reader, int flags, int dataFlag, void *ptr, unsigned int size) const;
-
-        mutable OpenThreads::Mutex mMutex;
-
-        mutable int mDataLoaded;
+        bool condLoad(ESM::ESMReader& reader, int flags, int& targetFlags, int dataFlag, void *ptr, unsigned int size) const;
 
         mutable LandData *mLandData;
 };

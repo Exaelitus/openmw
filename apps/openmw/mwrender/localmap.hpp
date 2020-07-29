@@ -19,11 +19,6 @@ namespace ESM
     struct FogTexture;
 }
 
-namespace osgViewer
-{
-    class Viewer;
-}
-
 namespace osg
 {
     class Texture2D;
@@ -41,7 +36,7 @@ namespace MWRender
     class LocalMap
     {
     public:
-        LocalMap(osgViewer::Viewer* viewer);
+        LocalMap(osg::Group* root);
         ~LocalMap();
 
         /**
@@ -50,18 +45,19 @@ namespace MWRender
         void clear();
 
         /**
-         * Request a map render for the given cells. Render textures will be immediately created and can be retrieved with the getMapTexture function.
+         * Request a map render for the given cell. Render textures will be immediately created and can be retrieved with the getMapTexture function.
          */
-        void requestMap (std::set<const MWWorld::CellStore*> cells);
+        void requestMap (const MWWorld::CellStore* cell);
 
-        /**
-         * Remove map and fog textures for the given cell.
-         */
+        void addCell(MWWorld::CellStore* cell);
+
         void removeCell (MWWorld::CellStore* cell);
 
         osg::ref_ptr<osg::Texture2D> getMapTexture (int x, int y);
 
         osg::ref_ptr<osg::Texture2D> getFogOfWarTexture (int x, int y);
+
+        void removeCamera(osg::Camera* cam);
 
         /**
          * Indicates a camera has been queued for rendering and can be cleaned up in the next frame. For internal use only.
@@ -104,8 +100,6 @@ namespace MWRender
         osg::Group* getRoot();
 
     private:
-        osg::ref_ptr<osgViewer::Viewer> mViewer;
-
         osg::ref_ptr<osg::Group> mRoot;
         osg::ref_ptr<osg::Node> mSceneRoot;
 
@@ -114,6 +108,9 @@ namespace MWRender
         CameraVector mActiveCameras;
 
         CameraVector mCamerasPendingRemoval;
+
+        typedef std::set<std::pair<int, int> > Grid;
+        Grid mCurrentGrid;
 
         struct MapSegment
         {
@@ -128,6 +125,8 @@ namespace MWRender
             osg::ref_ptr<osg::Texture2D> mMapTexture;
             osg::ref_ptr<osg::Texture2D> mFogOfWarTexture;
             osg::ref_ptr<osg::Image> mFogOfWarImage;
+
+            Grid mGrid; // the grid that was active at the time of rendering this segment
 
             bool mHasFogState;
         };

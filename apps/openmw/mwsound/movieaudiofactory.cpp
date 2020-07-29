@@ -13,11 +13,11 @@ namespace MWSound
 {
 
     class MovieAudioDecoder;
-    class MWSoundDecoderBridge : public Sound_Decoder
+    class MWSoundDecoderBridge final : public Sound_Decoder
     {
     public:
         MWSoundDecoderBridge(MWSound::MovieAudioDecoder* decoder)
-            : Sound_Decoder(NULL)
+            : Sound_Decoder(nullptr)
             , mDecoder(decoder)
         {
         }
@@ -25,20 +25,19 @@ namespace MWSound
     private:
         MWSound::MovieAudioDecoder* mDecoder;
 
-        virtual void open(const std::string &fname);
-        virtual void close();
-        virtual void rewind();
-        virtual std::string getName();
-        virtual void getInfo(int *samplerate, ChannelConfig *chans, SampleType *type);
-        virtual size_t read(char *buffer, size_t bytes);
-        virtual size_t getSampleOffset();
+        void open(const std::string &fname) override;
+        void close() override;
+        std::string getName() override;
+        void getInfo(int *samplerate, ChannelConfig *chans, SampleType *type) override;
+        size_t read(char *buffer, size_t bytes) override;
+        size_t getSampleOffset() override;
     };
 
     class MovieAudioDecoder : public Video::MovieAudioDecoder
     {
     public:
         MovieAudioDecoder(Video::VideoState *videoState)
-            : Video::MovieAudioDecoder(videoState)
+            : Video::MovieAudioDecoder(videoState), mAudioTrack(nullptr)
         {
             mDecoderBridge.reset(new MWSoundDecoderBridge(this));
         }
@@ -47,7 +46,7 @@ namespace MWSound
         {
             ssize_t clock_delay = (mFrameSize-mFramePos) / av_get_channel_layout_nb_channels(mOutputChannelLayout) /
                                   av_get_bytes_per_sample(mOutputSampleFormat);
-            return (size_t)(mAudioClock*mAVStream->codec->sample_rate) - clock_delay;
+            return (size_t)(mAudioClock*mAudioContext->sample_rate) - clock_delay;
         }
 
         std::string getStreamName()
@@ -60,7 +59,7 @@ namespace MWSound
 
         virtual double getAudioClock()
         {
-            return (double)getSampleOffset()/(double)mAVStream->codec->sample_rate -
+            return (double)getSampleOffset()/(double)mAudioContext->sample_rate -
                    MWBase::Environment::get().getSoundManager()->getTrackTimeDelay(mAudioTrack);
         }
 
@@ -86,23 +85,22 @@ namespace MWSound
     public:
         ~MovieAudioDecoder()
         {
-            if(mAudioTrack.get())
+            if(mAudioTrack)
                 MWBase::Environment::get().getSoundManager()->stopTrack(mAudioTrack);
-            mAudioTrack.reset();
+            mAudioTrack = nullptr;
             mDecoderBridge.reset();
         }
 
-        MWBase::SoundStreamPtr mAudioTrack;
-        boost::shared_ptr<MWSoundDecoderBridge> mDecoderBridge;
+        MWBase::SoundStream *mAudioTrack;
+        std::shared_ptr<MWSoundDecoderBridge> mDecoderBridge;
     };
 
 
     void MWSoundDecoderBridge::open(const std::string &fname)
     {
-        throw std::runtime_error("unimplemented");
+        throw std::runtime_error("Method not implemented");
     }
     void MWSoundDecoderBridge::close() {}
-    void MWSoundDecoderBridge::rewind() {}
 
     std::string MWSoundDecoderBridge::getName()
     {
@@ -125,11 +123,8 @@ namespace MWSound
         else if (outputChannelLayout == AV_CH_LAYOUT_QUAD)
             *chans = ChannelConfig_Quad;
         else
-        {
-            std::stringstream error;
-            error << "Unsupported channel layout: " << outputChannelLayout;
-            throw std::runtime_error(error.str());
-        }
+            throw std::runtime_error("Unsupported channel layout: "+
+                                     std::to_string(outputChannelLayout));
 
         AVSampleFormat outputSampleFormat = mDecoder->getOutputSampleFormat();
         if (outputSampleFormat == AV_SAMPLE_FMT_U8)
@@ -142,7 +137,7 @@ namespace MWSound
         {
             char str[1024];
             av_get_sample_fmt_string(str, sizeof(str), outputSampleFormat);
-            throw std::runtime_error(std::string("Unsupported sample format: ") + str);
+            throw std::runtime_error(std::string("Unsupported sample format: ")+str);
         }
     }
 
@@ -158,14 +153,14 @@ namespace MWSound
 
 
 
-    boost::shared_ptr<Video::MovieAudioDecoder> MovieAudioFactory::createDecoder(Video::VideoState* videoState)
+    std::shared_ptr<Video::MovieAudioDecoder> MovieAudioFactory::createDecoder(Video::VideoState* videoState)
     {
-        boost::shared_ptr<MWSound::MovieAudioDecoder> decoder(new MWSound::MovieAudioDecoder(videoState));
+        std::shared_ptr<MWSound::MovieAudioDecoder> decoder(new MWSound::MovieAudioDecoder(videoState));
         decoder->setupFormat();
 
         MWBase::SoundManager *sndMgr = MWBase::Environment::get().getSoundManager();
-        MWBase::SoundStreamPtr sound = sndMgr->playTrack(decoder->mDecoderBridge, MWBase::SoundManager::Play_TypeMovie);
-        if (!sound.get())
+        MWBase::SoundStream *sound = sndMgr->playTrack(decoder->mDecoderBridge, MWSound::Type::Movie);
+        if (!sound)
         {
             decoder.reset();
             return decoder;

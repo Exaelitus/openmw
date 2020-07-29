@@ -1,6 +1,7 @@
 #include "tradeitemmodel.hpp"
 
 #include <components/misc/stringops.hpp>
+#include <components/settings/settings.hpp>
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
@@ -13,6 +14,11 @@ namespace MWGui
         : mMerchant(merchant)
     {
         mSourceModel = sourceModel;
+    }
+
+    bool TradeItemModel::allowedToUseItems() const
+    {
+        return true;
     }
 
     ItemStack TradeItemModel::getItem (ModelIndex index)
@@ -31,13 +37,12 @@ namespace MWGui
 
     void TradeItemModel::borrowImpl(const ItemStack &item, std::vector<ItemStack> &out)
     {
-        std::vector<ItemStack>::iterator it = out.begin();
         bool found = false;
-        for (; it != out.end(); ++it)
+        for (ItemStack& itemStack : out)
         {
-            if (it->mBase == item.mBase)
+            if (itemStack.mBase == item.mBase)
             {
-                it->mCount += item.mCount;
+                itemStack.mCount += item.mCount;
                 found = true;
                 break;
             }
@@ -95,15 +100,15 @@ namespace MWGui
 
     void TradeItemModel::adjustEncumbrance(float &encumbrance)
     {
-        for (std::vector<ItemStack>::iterator it = mBorrowedToUs.begin(); it != mBorrowedToUs.end(); ++it)
+        for (ItemStack& itemStack : mBorrowedToUs)
         {
-            MWWorld::Ptr item = it->mBase;
-            encumbrance += item.getClass().getWeight(item) * it->mCount;
+            MWWorld::Ptr& item = itemStack.mBase;
+            encumbrance += item.getClass().getWeight(item) * itemStack.mCount;
         }
-        for (std::vector<ItemStack>::iterator it = mBorrowedFromUs.begin(); it != mBorrowedFromUs.end(); ++it)
+        for (ItemStack& itemStack : mBorrowedFromUs)
         {
-            MWWorld::Ptr item = it->mBase;
-            encumbrance -= item.getClass().getWeight(item) * it->mCount;
+            MWWorld::Ptr& item = itemStack.mBase;
+            encumbrance -= item.getClass().getWeight(item) * itemStack.mCount;
         }
         encumbrance = std::max(0.f, encumbrance);
     }
@@ -121,25 +126,25 @@ namespace MWGui
 
     void TradeItemModel::transferItems()
     {
-        std::vector<ItemStack>::iterator it = mBorrowedToUs.begin();
-        for (; it != mBorrowedToUs.end(); ++it)
+        for (ItemStack& itemStack : mBorrowedToUs)
         {
             // get index in the source model
-            ItemModel* sourceModel = it->mCreator;
+            ItemModel* sourceModel = itemStack.mCreator;
             size_t i=0;
             for (; i<sourceModel->getItemCount(); ++i)
             {
-                if (it->mBase == sourceModel->getItem(i).mBase)
+                if (itemStack.mBase == sourceModel->getItem(i).mBase)
                     break;
             }
             if (i == sourceModel->getItemCount())
                 throw std::runtime_error("The borrowed item disappeared");
 
             const ItemStack& item = sourceModel->getItem(i);
+            static const bool prevent = Settings::Manager::getBool("prevent merchant equipping", "Game");
             // copy the borrowed items to our model
-            copyItem(item, it->mCount);
+            copyItem(item, itemStack.mCount, !prevent);
             // then remove them from the source model
-            sourceModel->removeItem(item, it->mCount);
+            sourceModel->removeItem(item, itemStack.mCount);
         }
         mBorrowedToUs.clear();
         mBorrowedFromUs.clear();
@@ -163,6 +168,10 @@ namespace MWGui
                 MWWorld::Ptr base = item.mBase;
                 if(Misc::StringUtils::ciEqual(base.getCellRef().getRefId(), MWWorld::ContainerStore::sGoldId))
                     continue;
+
+                if (!base.getClass().showsInInventory(base))
+                    return;
+
                 if(!base.getClass().canSell(base, services))
                     continue;
 
@@ -180,14 +189,13 @@ namespace MWGui
             }
 
             // don't show items that we borrowed to someone else
-            std::vector<ItemStack>::iterator it = mBorrowedFromUs.begin();
-            for (; it != mBorrowedFromUs.end(); ++it)
+            for (ItemStack& itemStack : mBorrowedFromUs)
             {
-                if (it->mBase == item.mBase)
+                if (itemStack.mBase == item.mBase)
                 {
-                    if (item.mCount < it->mCount)
+                    if (item.mCount < itemStack.mCount)
                         throw std::runtime_error("Lent more items than present");
-                    item.mCount -= it->mCount;
+                    item.mCount -= itemStack.mCount;
                 }
             }
 
@@ -196,12 +204,10 @@ namespace MWGui
         }
 
         // add items borrowed to us
-        std::vector<ItemStack>::iterator it = mBorrowedToUs.begin();
-        for (; it != mBorrowedToUs.end(); ++it)
+        for (ItemStack& itemStack : mBorrowedToUs)
         {
-            ItemStack item = *it;
-            item.mType = ItemStack::Type_Barter;
-            mItems.push_back(item);
+            itemStack.mType = ItemStack::Type_Barter;
+            mItems.push_back(itemStack);
         }
     }
 

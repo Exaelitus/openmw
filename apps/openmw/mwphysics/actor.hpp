@@ -3,7 +3,7 @@
 
 #include <memory>
 
-#include "../mwworld/ptr.hpp"
+#include "ptrholder.hpp"
 
 #include <osg/Vec3f>
 #include <osg/Quat>
@@ -12,6 +12,7 @@
 class btCollisionWorld;
 class btCollisionShape;
 class btCollisionObject;
+class btConvexShape;
 
 namespace Resource
 {
@@ -20,30 +21,6 @@ namespace Resource
 
 namespace MWPhysics
 {
-
-    class PtrHolder
-    {
-    public:
-        virtual ~PtrHolder() {}
-
-        void updatePtr(const MWWorld::Ptr& updated)
-        {
-            mPtr = updated;
-        }
-
-        MWWorld::Ptr getPtr()
-        {
-            return mPtr;
-        }
-
-        MWWorld::ConstPtr getPtr() const
-        {
-            return mPtr;
-        }
-
-    protected:
-        MWWorld::Ptr mPtr;
-    };
 
     class Actor : public PtrHolder
     {
@@ -61,6 +38,8 @@ namespace MWPhysics
             return mInternalCollisionMode;
         }
 
+        btConvexShape* getConvexShape() const { return mConvexShape; }
+
         /**
          * Enables or disables the *external* collision body. If disabled, other actors will not collide with this actor.
          */
@@ -68,6 +47,11 @@ namespace MWPhysics
 
         void updateScale();
         void updateRotation();
+
+        /**
+         * Return true if the collision shape looks the same no matter how its Z rotated.
+         */
+        bool isRotationallyInvariant() const;
 
         /**
          * Set mPosition and mPreviousPosition to the position in the Ptr's RefData. This should be used
@@ -81,6 +65,11 @@ namespace MWPhysics
          * Returns the half extents of the collision body (scaled according to collision scale)
          */
         osg::Vec3f getHalfExtents() const;
+
+        /**
+         * Returns the half extents of the collision body (not scaled)
+         */
+        osg::Vec3f getOriginalHalfExtents() const;
 
         /**
          * Returns the position of the collision body
@@ -124,6 +113,13 @@ namespace MWPhysics
             return mInternalCollisionMode && mOnGround;
         }
 
+        void setOnSlope(bool slope);
+
+        bool getOnSlope() const
+        {
+            return mInternalCollisionMode && mOnSlope;
+        }
+
         btCollisionObject* getCollisionObject() const
         {
             return mCollisionObject.get();
@@ -139,13 +135,18 @@ namespace MWPhysics
     private:
         /// Removes then re-adds the collision object to the dynamics world
         void updateCollisionMask();
+        void addCollisionMask(int collisionMask);
+        int getCollisionMask();
 
         bool mCanWaterWalk;
         bool mWalkingOnWater;
 
-        std::auto_ptr<btCollisionShape> mShape;
+        bool mRotationallyInvariant;
 
-        std::auto_ptr<btCollisionObject> mCollisionObject;
+        std::unique_ptr<btCollisionShape> mShape;
+        btConvexShape* mConvexShape;
+
+        std::unique_ptr<btCollisionObject> mCollisionObject;
 
         osg::Vec3f mMeshTranslation;
         osg::Vec3f mHalfExtents;
@@ -158,6 +159,7 @@ namespace MWPhysics
 
         osg::Vec3f mForce;
         bool mOnGround;
+        bool mOnSlope;
         bool mInternalCollisionMode;
         bool mExternalCollisionMode;
 

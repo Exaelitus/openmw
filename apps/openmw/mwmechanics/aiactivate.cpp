@@ -5,70 +5,58 @@
 #include "../mwbase/world.hpp"
 #include "../mwbase/environment.hpp"
 
-#include "../mwmechanics/creaturestats.hpp"
-
 #include "../mwworld/class.hpp"
 
-#include "steering.hpp"
+#include "creaturestats.hpp"
 #include "movement.hpp"
+#include "steering.hpp"
 
-MWMechanics::AiActivate::AiActivate(const std::string &objectId)
-    : mObjectId(objectId)
+namespace MWMechanics
 {
-}
-MWMechanics::AiActivate *MWMechanics::AiActivate::clone() const
-{
-    return new AiActivate(*this);
-}
-bool MWMechanics::AiActivate::execute (const MWWorld::Ptr& actor, CharacterController& characterController, AiState& state, float duration)
-{
-    ESM::Position pos = actor.getRefData().getPosition(); //position of the actor
-    const MWWorld::Ptr target = MWBase::Environment::get().getWorld()->searchPtr(mObjectId, false); //The target to follow
-
-    actor.getClass().getCreatureStats(actor).setDrawState(DrawState_Nothing);
-
-    if(target == MWWorld::Ptr() ||
-        !target.getRefData().getCount() || !target.getRefData().isEnabled()  // Really we should be checking whether the target is currently registered
-                                                                            // with the MechanicsManager
-            )
-        return true;   //Target doesn't exist
-
-    //Set the target desition from the actor
-    ESM::Pathgrid::Point dest = target.getRefData().getPosition().pos;
-
-    if(distance(dest, pos.pos[0], pos.pos[1], pos.pos[2]) < 200) { //Stop when you get close
-        actor.getClass().getMovementSettings(actor).mPosition[1] = 0;
-        MWWorld::Ptr target = MWBase::Environment::get().getWorld()->getPtr(mObjectId,false);
-
-        MWBase::Environment::get().getWorld()->activate(target, actor);
-
-        return true;
-    }
-    else {
-        pathTo(actor, dest, duration); //Go to the destination
+    AiActivate::AiActivate(const std::string &objectId)
+        : mObjectId(objectId)
+    {
     }
 
-    return false;
-}
+    bool AiActivate::execute(const MWWorld::Ptr& actor, CharacterController& characterController, AiState& state, float duration)
+    {
+        const MWWorld::Ptr target = MWBase::Environment::get().getWorld()->searchPtr(mObjectId, false); //The target to follow
 
-int MWMechanics::AiActivate::getTypeId() const
-{
-    return TypeIdActivate;
-}
+        actor.getClass().getCreatureStats(actor).setDrawState(DrawState_Nothing);
 
-void MWMechanics::AiActivate::writeState(ESM::AiSequence::AiSequence &sequence) const
-{
-    std::auto_ptr<ESM::AiSequence::AiActivate> activate(new ESM::AiSequence::AiActivate());
-    activate->mTargetId = mObjectId;
+        // Stop if the target doesn't exist
+        // Really we should be checking whether the target is currently registered with the MechanicsManager
+        if (target == MWWorld::Ptr() || !target.getRefData().getCount() || !target.getRefData().isEnabled())
+            return true;
 
-    ESM::AiSequence::AiPackageContainer package;
-    package.mType = ESM::AiSequence::Ai_Activate;
-    package.mPackage = activate.release();
-    sequence.mPackages.push_back(package);
-}
+        // Turn to target and move to it directly, without pathfinding.
+        const osg::Vec3f targetDir = target.getRefData().getPosition().asVec3() - actor.getRefData().getPosition().asVec3();
 
-MWMechanics::AiActivate::AiActivate(const ESM::AiSequence::AiActivate *activate)
-    : mObjectId(activate->mTargetId)
-{
+        zTurn(actor, std::atan2(targetDir.x(), targetDir.y()), 0.f);
+        actor.getClass().getMovementSettings(actor).mPosition[1] = 1;
+        actor.getClass().getMovementSettings(actor).mPosition[0] = 0;
 
+        if (MWBase::Environment::get().getWorld()->getMaxActivationDistance() >= targetDir.length())
+        {
+            // Note: we intentionally do not cancel package after activation here for backward compatibility with original engine.
+            MWBase::Environment::get().getWorld()->activate(target, actor);
+        }
+        return false;
+    }
+
+    void AiActivate::writeState(ESM::AiSequence::AiSequence &sequence) const
+    {
+        std::unique_ptr<ESM::AiSequence::AiActivate> activate(new ESM::AiSequence::AiActivate());
+        activate->mTargetId = mObjectId;
+
+        ESM::AiSequence::AiPackageContainer package;
+        package.mType = ESM::AiSequence::Ai_Activate;
+        package.mPackage = activate.release();
+        sequence.mPackages.push_back(package);
+    }
+
+    AiActivate::AiActivate(const ESM::AiSequence::AiActivate *activate)
+        : mObjectId(activate->mTargetId)
+    {
+    }
 }

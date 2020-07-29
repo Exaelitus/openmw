@@ -1,6 +1,6 @@
 #include "cellref.hpp"
 
-#include <iostream>
+#include <components/debug/debuglog.hpp>
 
 #include "esmreader.hpp"
 #include "esmwriter.hpp"
@@ -48,9 +48,7 @@ void ESM::CellRef::loadId (ESMReader& esm, bool wideRefNum)
     mRefID = esm.getHNOString ("NAME");
     if (mRefID.empty())
     {
-        std::ios::fmtflags f(std::cerr.flags());
-        std::cerr << "Warning: got CellRef with empty RefId in " << esm.getName() << " 0x" << std::hex << esm.getFileOffset() << std::endl;
-        std::cerr.flags(f);
+        Log(Debug::Warning) << "Warning: got CellRef with empty RefId in " << esm.getName() << " 0x" << std::hex << esm.getFileOffset();
     }
 }
 
@@ -62,13 +60,17 @@ void ESM::CellRef::loadData(ESMReader &esm, bool &isDeleted)
     while (!isLoaded && esm.hasMoreSubs())
     {
         esm.getSubName();
-        switch (esm.retSubName().val)
+        switch (esm.retSubName().intval)
         {
             case ESM::FourCC<'U','N','A','M'>::value:
                 esm.getHT(mReferenceBlocked);
                 break;
             case ESM::FourCC<'X','S','C','L'>::value:
                 esm.getHT(mScale);
+                if (mScale < 0.5)
+                    mScale = 0.5;
+                else if (mScale > 2)
+                    mScale = 2;
                 break;
             case ESM::FourCC<'A','N','A','M'>::value:
                 mOwner = esm.getHString();
@@ -126,6 +128,12 @@ void ESM::CellRef::loadData(ESMReader &esm, bool &isDeleted)
                 break;
         }
     }
+
+    if (mLockLevel == 0 && !mKey.empty())
+    {
+        mLockLevel = UnbreakableLock;
+        mTrap.clear();
+    }
 }
 
 void ESM::CellRef::save (ESMWriter &esm, bool wideRefNum, bool inInventory, bool isDeleted) const
@@ -140,16 +148,27 @@ void ESM::CellRef::save (ESMWriter &esm, bool wideRefNum, bool inInventory, bool
     }
 
     if (mScale != 1.0) {
-        esm.writeHNT("XSCL", mScale);
+        float scale = mScale;
+        if (scale < 0.5)
+            scale = 0.5;
+        else if (scale > 2)
+            scale = 2;
+        esm.writeHNT("XSCL", scale);
     }
 
-    esm.writeHNOCString("ANAM", mOwner);
+    if (!inInventory)
+        esm.writeHNOCString("ANAM", mOwner);
+
     esm.writeHNOCString("BNAM", mGlobalVariable);
     esm.writeHNOCString("XSOL", mSoul);
 
-    esm.writeHNOCString("CNAM", mFaction);
-    if (mFactionRank != -2) {
-        esm.writeHNT("INDX", mFactionRank);
+    if (!inInventory)
+    {
+        esm.writeHNOCString("CNAM", mFaction);
+        if (mFactionRank != -2)
+        {
+            esm.writeHNT("INDX", mFactionRank);
+        }
     }
 
     if (mEnchantmentCharge != -1)
@@ -158,9 +177,8 @@ void ESM::CellRef::save (ESMWriter &esm, bool wideRefNum, bool inInventory, bool
     if (mChargeInt != -1)
         esm.writeHNT("INTV", mChargeInt);
 
-    if (mGoldValue != 1) {
+    if (mGoldValue > 1)
         esm.writeHNT("NAM9", mGoldValue);
-    }
 
     if (!inInventory && mTeleport)
     {
@@ -173,10 +191,10 @@ void ESM::CellRef::save (ESMWriter &esm, bool wideRefNum, bool inInventory, bool
     }
 
     if (!inInventory)
+    {
         esm.writeHNOCString ("KNAM", mKey);
-
-    if (!inInventory)
         esm.writeHNOCString ("TNAM", mTrap);
+    }
 
     if (mReferenceBlocked != -1)
         esm.writeHNT("UNAM", mReferenceBlocked);
@@ -188,7 +206,7 @@ void ESM::CellRef::save (ESMWriter &esm, bool wideRefNum, bool inInventory, bool
 void ESM::CellRef::blank()
 {
     mRefNum.unset();
-    mRefID.clear();    
+    mRefID.clear();
     mScale = 1;
     mOwner.clear();
     mGlobalVariable.clear();
@@ -196,15 +214,16 @@ void ESM::CellRef::blank()
     mFaction.clear();
     mFactionRank = -2;
     mChargeInt = -1;
+    mChargeIntRemainder = 0.0f;
     mEnchantmentCharge = -1;
-    mGoldValue = 0;
+    mGoldValue = 1;
     mDestCell.clear();
     mLockLevel = 0;
     mKey.clear();
     mTrap.clear();
     mReferenceBlocked = -1;
     mTeleport = false;
-    
+
     for (int i=0; i<3; ++i)
     {
         mDoorDest.pos[i] = 0;
@@ -212,20 +231,4 @@ void ESM::CellRef::blank()
         mPos.pos[i] = 0;
         mPos.rot[i] = 0;
     }
-}
-
-bool ESM::operator== (const RefNum& left, const RefNum& right)
-{
-    return left.mIndex==right.mIndex && left.mContentFile==right.mContentFile;
-}
-
-bool ESM::operator< (const RefNum& left, const RefNum& right)
-{
-    if (left.mIndex<right.mIndex)
-        return true;
-
-    if (left.mIndex>right.mIndex)
-        return false;
-
-    return left.mContentFile<right.mContentFile;
 }

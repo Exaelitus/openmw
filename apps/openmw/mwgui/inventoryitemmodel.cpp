@@ -1,8 +1,16 @@
 #include "inventoryitemmodel.hpp"
 
+#include <sstream>
+
+#include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/npcstats.hpp"
+
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/inventorystore.hpp"
+
+#include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 
 namespace MWGui
 {
@@ -29,32 +37,49 @@ size_t InventoryItemModel::getItemCount()
 ItemModel::ModelIndex InventoryItemModel::getIndex (ItemStack item)
 {
     size_t i = 0;
-    for (std::vector<ItemStack>::iterator it = mItems.begin(); it != mItems.end(); ++it)
+    for (ItemStack& itemStack : mItems)
     {
-        if (*it == item)
+        if (itemStack == item)
             return i;
         ++i;
     }
     return -1;
 }
 
-MWWorld::Ptr InventoryItemModel::copyItem (const ItemStack& item, size_t count, bool setNewOwner)
+MWWorld::Ptr InventoryItemModel::copyItem (const ItemStack& item, size_t count, bool allowAutoEquip)
 {
     if (item.mBase.getContainerStore() == &mActor.getClass().getContainerStore(mActor))
         throw std::runtime_error("Item to copy needs to be from a different container!");
-    return *mActor.getClass().getContainerStore(mActor).add(item.mBase, count, mActor, setNewOwner);
+    return *mActor.getClass().getContainerStore(mActor).add(item.mBase, count, mActor, allowAutoEquip);
 }
-
 
 void InventoryItemModel::removeItem (const ItemStack& item, size_t count)
 {
-    MWWorld::ContainerStore& store = mActor.getClass().getContainerStore(mActor);
-    int removed = store.remove(item.mBase, count, mActor);
+    int removed = 0;
+    // Re-equipping makes sense only if a target has inventory
+    if (mActor.getClass().hasInventoryStore(mActor))
+    {
+        MWWorld::InventoryStore& store = mActor.getClass().getInventoryStore(mActor);
+        removed = store.remove(item.mBase, count, mActor, true);
+    }
+    else
+    {
+        MWWorld::ContainerStore& store = mActor.getClass().getContainerStore(mActor);
+        removed = store.remove(item.mBase, count, mActor);
+    }
+
+    std::stringstream error;
 
     if (removed == 0)
-        throw std::runtime_error("Item to remove not found in container store");
+    {
+        error << "Item '" << item.mBase.getCellRef().getRefId() << "' was not found in container store to remove";
+        throw std::runtime_error(error.str());
+    }
     else if (removed < static_cast<int>(count))
-        throw std::runtime_error("Not enough items in the stack to remove");
+    {
+        error << "Not enough items '" << item.mBase.getCellRef().getRefId() << "' in the stack to remove (" << static_cast<int>(count) << " requested, " << removed << " found)";
+        throw std::runtime_error(error.str());
+    }
 }
 
 MWWorld::Ptr InventoryItemModel::moveItem(const ItemStack &item, size_t count, ItemModel *otherModel)
@@ -63,7 +88,7 @@ MWWorld::Ptr InventoryItemModel::moveItem(const ItemStack &item, size_t count, I
     if (item.mFlags & ItemStack::Flag_Bound)
         return MWWorld::Ptr();
 
-    MWWorld::Ptr ret = otherModel->copyItem(item, count, false);
+    MWWorld::Ptr ret = otherModel->copyItem(item, count);
     removeItem(item, count);
     return ret;
 }
@@ -77,23 +102,33 @@ void InventoryItemModel::update()
     for (MWWorld::ContainerStoreIterator it = store.begin(); it != store.end(); ++it)
     {
         MWWorld::Ptr item = *it;
-        // NOTE: Don't show WerewolfRobe objects in the inventory, or allow them to be taken.
-        // Vanilla likely uses a hack like this since there's no other way to prevent it from
-        // being shown or taken.
-        if(item.getCellRef().getRefId() == "werewolfrobe")
+
+        if (!item.getClass().showsInInventory(item))
             continue;
 
         ItemStack newItem (item, this, item.getRefData().getCount());
 
         if (mActor.getClass().hasInventoryStore(mActor))
         {
-            MWWorld::InventoryStore& store = mActor.getClass().getInventoryStore(mActor);
-            if (store.isEquipped(newItem.mBase))
+            MWWorld::InventoryStore& invStore = mActor.getClass().getInventoryStore(mActor);
+            if (invStore.isEquipped(newItem.mBase))
                 newItem.mType = ItemStack::Type_Equipped;
         }
 
         mItems.push_back(newItem);
     }
+}
+
+bool InventoryItemModel::onTakeItem(const MWWorld::Ptr &item, int count)
+{
+    // Looting a dead corpse is considered OK
+    if (mActor.getClass().isActor() && mActor.getClass().getCreatureStats(mActor).isDead())
+        return true;
+
+    MWWorld::Ptr player = MWMechanics::getPlayer();
+    MWBase::Environment::get().getMechanicsManager()->itemTaken(player, item, mActor, count);
+
+    return true;
 }
 
 }

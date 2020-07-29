@@ -2,8 +2,6 @@
 
 #include <cassert>
 
-#include <OpenThreads/ScopedLock>
-
 #include <osg/PrimitiveSet>
 
 #include "defs.hpp"
@@ -23,7 +21,7 @@ osg::ref_ptr<IndexArrayType> createIndexBuffer(unsigned int flags, unsigned int 
 
     bool anyDeltas = (lodDeltas[Terrain::North] || lodDeltas[Terrain::South] || lodDeltas[Terrain::West] || lodDeltas[Terrain::East]);
 
-    size_t increment = 1 << lodLevel;
+    size_t increment = static_cast<size_t>(1) << lodLevel;
     assert(increment < verts);
 
     osg::ref_ptr<IndexArrayType> indices (new IndexArrayType(osg::PrimitiveSet::TRIANGLES));
@@ -75,7 +73,7 @@ osg::ref_ptr<IndexArrayType> createIndexBuffer(unsigned int flags, unsigned int 
 
         // South
         size_t row = 0;
-        size_t outerStep = 1 << (lodDeltas[Terrain::South] + lodLevel);
+        size_t outerStep = static_cast<size_t>(1) << (lodDeltas[Terrain::South] + lodLevel);
         for (size_t col = 0; col < verts-1; col += outerStep)
         {
             indices->push_back(verts*col+row);
@@ -124,7 +122,7 @@ osg::ref_ptr<IndexArrayType> createIndexBuffer(unsigned int flags, unsigned int 
         // West
         size_t col = 0;
         outerStep = size_t(1) << (lodDeltas[Terrain::West] + lodLevel);
-        for (size_t row = 0; row < verts-1; row += outerStep)
+        for (row = 0; row < verts-1; row += outerStep)
         {
             indices->push_back(verts*col+row+outerStep);
             indices->push_back(verts*col+row);
@@ -148,7 +146,7 @@ osg::ref_ptr<IndexArrayType> createIndexBuffer(unsigned int flags, unsigned int 
         // East
         col = verts-1;
         outerStep = size_t(1) << (lodDeltas[Terrain::East] + lodLevel);
-        for (size_t row = 0; row < verts-1; row += outerStep)
+        for (row = 0; row < verts-1; row += outerStep)
         {
             indices->push_back(verts*col+row);
             indices->push_back(verts*col+row+outerStep);
@@ -178,57 +176,83 @@ osg::ref_ptr<IndexArrayType> createIndexBuffer(unsigned int flags, unsigned int 
 namespace Terrain
 {
 
-    osg::ref_ptr<osg::Vec2Array> BufferCache::getUVBuffer()
+    osg::ref_ptr<osg::Vec2Array> BufferCache::getUVBuffer(unsigned int numVerts)
     {
-        OpenThreads::ScopedLock<OpenThreads::Mutex> lock(mUvBufferMutex);
-        if (mUvBufferMap.find(mNumVerts) != mUvBufferMap.end())
+        std::lock_guard<std::mutex> lock(mUvBufferMutex);
+        if (mUvBufferMap.find(numVerts) != mUvBufferMap.end())
         {
-            return mUvBufferMap[mNumVerts];
+            return mUvBufferMap[numVerts];
         }
 
-        int vertexCount = mNumVerts * mNumVerts;
+        int vertexCount = numVerts * numVerts;
 
         osg::ref_ptr<osg::Vec2Array> uvs (new osg::Vec2Array);
         uvs->reserve(vertexCount);
 
-        for (unsigned int col = 0; col < mNumVerts; ++col)
+        for (unsigned int col = 0; col < numVerts; ++col)
         {
-            for (unsigned int row = 0; row < mNumVerts; ++row)
+            for (unsigned int row = 0; row < numVerts; ++row)
             {
-                uvs->push_back(osg::Vec2f(col / static_cast<float>(mNumVerts-1),
-                                          ((mNumVerts-1) - row) / static_cast<float>(mNumVerts-1)));
+                uvs->push_back(osg::Vec2f(col / static_cast<float>(numVerts-1),
+                                          ((numVerts-1) - row) / static_cast<float>(numVerts-1)));
             }
         }
 
         // Assign a VBO here to enable state sharing between different Geometries.
         uvs->setVertexBufferObject(new osg::VertexBufferObject);
 
-        mUvBufferMap[mNumVerts] = uvs;
+        mUvBufferMap[numVerts] = uvs;
         return uvs;
     }
 
-    osg::ref_ptr<osg::DrawElements> BufferCache::getIndexBuffer(unsigned int flags)
+    osg::ref_ptr<osg::DrawElements> BufferCache::getIndexBuffer(unsigned int numVerts, unsigned int flags)
     {
-        OpenThreads::ScopedLock<OpenThreads::Mutex> lock(mIndexBufferMutex);
-        unsigned int verts = mNumVerts;
+        std::pair<int, int> id = std::make_pair(numVerts, flags);
+        std::lock_guard<std::mutex> lock(mIndexBufferMutex);
 
-        if (mIndexBufferMap.find(flags) != mIndexBufferMap.end())
+        if (mIndexBufferMap.find(id) != mIndexBufferMap.end())
         {
-            return mIndexBufferMap[flags];
+            return mIndexBufferMap[id];
         }
 
         osg::ref_ptr<osg::DrawElements> buffer;
 
-        if (verts*verts <= (0xffffu))
-            buffer = createIndexBuffer<osg::DrawElementsUShort>(flags, verts);
+        if (numVerts*numVerts <= (0xffffu))
+            buffer = createIndexBuffer<osg::DrawElementsUShort>(flags, numVerts);
         else
-            buffer = createIndexBuffer<osg::DrawElementsUInt>(flags, verts);
+            buffer = createIndexBuffer<osg::DrawElementsUInt>(flags, numVerts);
 
         // Assign a EBO here to enable state sharing between different Geometries.
         buffer->setElementBufferObject(new osg::ElementBufferObject);
 
-        mIndexBufferMap[flags] = buffer;
+        mIndexBufferMap[id] = buffer;
         return buffer;
+    }
+
+    void BufferCache::clearCache()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mIndexBufferMutex);
+            mIndexBufferMap.clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(mUvBufferMutex);
+            mUvBufferMap.clear();
+        }
+    }
+
+    void BufferCache::releaseGLObjects(osg::State *state)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mIndexBufferMutex);
+            for (auto indexbuffer : mIndexBufferMap)
+                indexbuffer.second->releaseGLObjects(state);
+        }
+        {
+            std::lock_guard<std::mutex> lock(mUvBufferMutex);
+            for (auto uvbuffer : mUvBufferMap)
+                uvbuffer.second->releaseGLObjects(state);
+        }
     }
 
 }

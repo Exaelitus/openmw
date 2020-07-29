@@ -1,6 +1,6 @@
-#include "numericeditbox.hpp"
+#include <stdexcept>
 
-#include <boost/lexical_cast.hpp>
+#include "numericeditbox.hpp"
 
 namespace Gui
 {
@@ -30,7 +30,7 @@ namespace Gui
 
         try
         {
-            mValue = boost::lexical_cast<int>(newCaption);
+            mValue = std::stoi(newCaption);
             int capped = std::min(mMaxValue, std::max(mValue, mMinValue));
             if (capped != mValue)
             {
@@ -38,7 +38,11 @@ namespace Gui
                 setCaption(MyGUI::utility::toString(mValue));
             }
         }
-        catch (boost::bad_lexical_cast&)
+        catch (const std::invalid_argument&)
+        {
+            setCaption(MyGUI::utility::toString(mValue));
+        }
+        catch (const std::out_of_range&)
         {
             setCaption(MyGUI::utility::toString(mValue));
         }
@@ -55,6 +59,11 @@ namespace Gui
         }
     }
 
+    int NumericEditBox::getValue()
+    {
+        return mValue;
+    }
+
     void NumericEditBox::setMinValue(int minValue)
     {
         mMinValue = minValue;
@@ -69,6 +78,22 @@ namespace Gui
     {
         Base::onKeyLostFocus(_new);
         setCaption(MyGUI::utility::toString(mValue));
+    }
+
+    void NumericEditBox::onKeyButtonPressed(MyGUI::KeyCode key, MyGUI::Char character)
+    {
+        if (key == MyGUI::KeyCode::ArrowUp)
+        {
+            setValue(std::min(mValue+1, mMaxValue));
+            eventValueChanged(mValue);
+        }
+        else if (key == MyGUI::KeyCode::ArrowDown)
+        {
+            setValue(std::max(mValue-1, mMinValue));
+            eventValueChanged(mValue);
+        }
+        else if (character == 0 || (character >= '0' && character <= '9'))
+            Base::onKeyButtonPressed(key, character);
     }
 
 }

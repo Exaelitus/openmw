@@ -2,7 +2,7 @@
   OpenMW - The completely unofficial reimplementation of Morrowind
   Copyright (C) 2008-2010  Nicolay Korslund
   Email: < korslund@gmail.com >
-  WWW: http://openmw.sourceforge.net/
+  WWW: https://openmw.org/
 
   This file (record.h) is part of the OpenMW package.
 
@@ -17,7 +17,7 @@
 
   You should have received a copy of the GNU General Public License
   version 3 along with this program. If not, see
-  http://www.gnu.org/licenses/ .
+  https://www.gnu.org/licenses/ .
 
  */
 
@@ -40,7 +40,10 @@ enum RecordType
   RC_NiLODNode,
   RC_NiBillboardNode,
   RC_AvoidNode,
+  RC_NiCollisionSwitch,
   RC_NiTriShape,
+  RC_NiTriStrips,
+  RC_NiLines,
   RC_NiRotatingParticles,
   RC_NiAutoNormalParticles,
   RC_NiBSParticleNode,
@@ -60,6 +63,7 @@ enum RecordType
   RC_NiGeomMorpherController,
   RC_NiKeyframeController,
   RC_NiAlphaController,
+  RC_NiRollController,
   RC_NiUVController,
   RC_NiPathController,
   RC_NiMaterialColorController,
@@ -79,6 +83,8 @@ enum RecordType
   RC_NiParticleRotation,
   RC_NiFloatData,
   RC_NiTriShapeData,
+  RC_NiTriStripsData,
+  RC_NiLinesData,
   RC_NiVisData,
   RC_NiColorData,
   RC_NiPixelData,
@@ -92,7 +98,10 @@ enum RecordType
   RC_NiSequenceStreamHelper,
   RC_NiSourceTexture,
   RC_NiSkinInstance,
-  RC_RootCollisionNode
+  RC_RootCollisionNode,
+  RC_NiSphericalCollider,
+  RC_NiLookAtController,
+  RC_NiPalette
 };
 
 /// Base class for all records

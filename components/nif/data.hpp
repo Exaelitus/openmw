@@ -2,7 +2,7 @@
   OpenMW - The completely unofficial reimplementation of Morrowind
   Copyright (C) 2008-2010  Nicolay Korslund
   Email: < korslund@gmail.com >
-  WWW: http://openmw.sourceforge.net/
+  WWW: https://openmw.org/
 
   This file (data.h) is part of the OpenMW package.
 
@@ -17,7 +17,7 @@
 
   You should have received a copy of the GNU General Public License
   version 3 along with this program. If not, see
-  http://www.gnu.org/licenses/ .
+  https://www.gnu.org/licenses/ .
 
  */
 
@@ -28,35 +28,49 @@
 
 #include "niftypes.hpp" // Transformation
 
-#include <osg/Array>
-
 namespace Nif
 {
 
 // Common ancestor for several data classes
-class ShapeData : public Record
+class NiGeometryData : public Record
 {
 public:
-    osg::ref_ptr<osg::Vec3Array> vertices, normals;
-    osg::ref_ptr<osg::Vec4Array> colors;
-
-    std::vector< osg::ref_ptr<osg::Vec2Array> > uvlist;
+    std::vector<osg::Vec3f> vertices, normals;
+    std::vector<osg::Vec4f> colors;
+    std::vector< std::vector<osg::Vec2f> > uvlist;
     osg::Vec3f center;
     float radius;
 
     void read(NIFStream *nif);
 };
 
-class NiTriShapeData : public ShapeData
+class NiTriShapeData : public NiGeometryData
 {
 public:
     // Triangles, three vertex indices per triangle
-    osg::ref_ptr<osg::DrawElementsUShort> triangles;
+    std::vector<unsigned short> triangles;
 
     void read(NIFStream *nif);
 };
 
-class NiAutoNormalParticlesData : public ShapeData
+class NiTriStripsData : public NiGeometryData
+{
+public:
+    // Triangle strips, series of vertex indices.
+    std::vector<std::vector<unsigned short>> strips;
+
+    void read(NIFStream *nif);
+};
+
+struct NiLinesData : public NiGeometryData
+{
+    // Lines, series of indices that correspond to connected vertices.
+    std::vector<unsigned short> lines;
+
+    void read(NIFStream *nif);
+};
+
+class NiAutoNormalParticlesData : public NiGeometryData
 {
 public:
     int numParticles;
@@ -110,6 +124,7 @@ public:
         NIPXFMT_RGB8,
         NIPXFMT_RGBA8,
         NIPXFMT_PAL8,
+        NIPXFMT_PALA8,
         NIPXFMT_DXT1,
         NIPXFMT_DXT3,
         NIPXFMT_DXT5,
@@ -117,8 +132,11 @@ public:
     };
     Format fmt;
 
-    unsigned int rmask, gmask, bmask, amask;
-    int bpp, mips;
+    unsigned int colorMask[4];
+    unsigned int bpp;
+
+    NiPalettePtr palette;
+    unsigned int numberOfMipmaps;
 
     struct Mipmap
     {
@@ -130,6 +148,7 @@ public:
     std::vector<unsigned char> data;
 
     void read(NIFStream *nif);
+    void post(NIFFile *nif);
 };
 
 class NiColorData : public Record
@@ -190,7 +209,7 @@ struct NiMorphData : public Record
 {
     struct MorphData {
         FloatKeyMapPtr mKeyFrames;
-        osg::ref_ptr<osg::Vec3Array> mVertices;
+        std::vector<osg::Vec3f> mVertices;
     };
     std::vector<MorphData> mMorphs;
 
@@ -209,6 +228,15 @@ struct NiKeyframeData : public Record
 
     Vector3KeyMapPtr mTranslations;
     FloatKeyMapPtr mScales;
+
+    void read(NIFStream *nif);
+};
+
+class NiPalette : public Record
+{
+public:
+    // 32-bit RGBA colors that correspond to 8-bit indices
+    std::vector<unsigned int> colors;
 
     void read(NIFStream *nif);
 };

@@ -2,8 +2,7 @@
 #define OPENMW_GAME_MWGUI_HUD_H
 
 #include "mapwindow.hpp"
-
-#include "../mwmechanics/stat.hpp"
+#include "statswatcher.hpp"
 
 namespace MWWorld
 {
@@ -15,13 +14,14 @@ namespace MWGui
     class DragAndDrop;
     class SpellIcons;
     class ItemWidget;
+    class SpellWidget;
 
-    class HUD : public Layout, public LocalMapBase
+    class HUD : public WindowBase, public LocalMapBase, public StatsListener
     {
     public:
         HUD(CustomMarkerCollection& customMarkers, DragAndDrop* dragAndDrop, MWRender::LocalMap* localMapRender);
         virtual ~HUD();
-        void setValue (const std::string& id, const MWMechanics::DynamicStat<float>& value);
+        void setValue (const std::string& id, const MWMechanics::DynamicStat<float>& value) override;
 
         /// Set time left for the player to start drowning
         /// @param time time left to start drowning
@@ -39,6 +39,7 @@ namespace MWGui
 
         void setSelectedSpell(const std::string& spellId, int successChancePercent);
         void setSelectedEnchantItem(const MWWorld::Ptr& item, int chargePercent);
+        const MWWorld::Ptr& getSelectedEnchantItem();
         void setSelectedWeapon(const MWWorld::Ptr& item, int durabilityPercent);
         void unsetSelectedSpell();
         void unsetSelectedWeapon();
@@ -46,7 +47,7 @@ namespace MWGui
         void setCrosshairVisible(bool visible);
         void setCrosshairOwned(bool owned);
 
-        void onFrame(float dt);
+        void onFrame(float dt) override;
 
         void setCellName(const std::string& cellName);
 
@@ -54,21 +55,21 @@ namespace MWGui
 
         MyGUI::Widget* getEffectBox() { return mEffectBox; }
 
-        void update();
-
         void setEnemy(const MWWorld::Ptr& enemy);
         void resetEnemy();
+
+        void clear() override;
 
     private:
         MyGUI::ProgressBar *mHealth, *mMagicka, *mStamina, *mEnemyHealth, *mDrowning;
         MyGUI::Widget* mHealthFrame;
         MyGUI::Widget *mWeapBox, *mSpellBox, *mSneakBox;
-        ItemWidget *mWeapImage, *mSpellImage;
+        ItemWidget *mWeapImage;
+        SpellWidget *mSpellImage;
         MyGUI::ProgressBar *mWeapStatus, *mSpellStatus;
         MyGUI::Widget *mEffectBox, *mMinimapBox;
         MyGUI::Button* mMinimapButton;
         MyGUI::ScrollView* mMinimap;
-        MyGUI::ImageBox* mCompass;
         MyGUI::ImageBox* mCrosshair;
         MyGUI::TextBox* mCellNameBox;
         MyGUI::TextBox* mWeaponSpellBox;
@@ -111,8 +112,8 @@ namespace MWGui
         void onMapClicked(MyGUI::Widget* _sender);
 
         // LocalMapBase
-        virtual void customMarkerCreated(MyGUI::Widget* marker);
-        virtual void doorMarkerCreated(MyGUI::Widget* marker);
+        virtual void customMarkerCreated(MyGUI::Widget* marker) override;
+        virtual void doorMarkerCreated(MyGUI::Widget* marker) override;
 
         void updateEnemyHealthBar();
 

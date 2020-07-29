@@ -13,7 +13,8 @@ namespace
 enum RefDataFlags
 {
     Flag_SuppressActivate = 1, // If set, activation will be suppressed and redirected to the OnActivate flag, which can then be handled by a script.
-    Flag_OnActivate = 2
+    Flag_OnActivate = 2,
+    Flag_ActivationBuffered = 4
 };
 }
 
@@ -30,6 +31,8 @@ namespace MWWorld
         mChanged = refData.mChanged;
         mDeletedByContentFile = refData.mDeletedByContentFile;
         mFlags = refData.mFlags;
+
+        mAnimationState = refData.mAnimationState;
 
         mCustomData = refData.mCustomData ? refData.mCustomData->clone() : 0;
     }
@@ -65,6 +68,7 @@ namespace MWWorld
       mEnabled (objectState.mEnabled != 0),
       mCount (objectState.mCount),
       mPosition (objectState.mPosition),
+      mAnimationState(objectState.mAnimationState),
       mCustomData (0),
       mChanged(true), mFlags(objectState.mFlags) // Loading from a savegame -> assume changed
     {
@@ -80,6 +84,7 @@ namespace MWWorld
         try
         {
             copy (refData);
+            mFlags &= ~(Flag_SuppressActivate|Flag_OnActivate|Flag_ActivationBuffered);
         }
         catch (...)
         {
@@ -96,6 +101,8 @@ namespace MWWorld
         objectState.mCount = mCount;
         objectState.mPosition = mPosition;
         objectState.mFlags = mFlags;
+
+        objectState.mAnimationState = mAnimationState;
     }
 
     RefData& RefData::operator= (const RefData& refData)
@@ -233,40 +240,45 @@ namespace MWWorld
 
     bool RefData::hasChanged() const
     {
-        return mChanged;
+        return mChanged || !mAnimationState.empty();
+    }
+
+    bool RefData::activateByScript()
+    {
+        bool ret = (mFlags & Flag_ActivationBuffered);
+        mFlags &= ~(Flag_SuppressActivate|Flag_OnActivate);
+        return ret;
     }
 
     bool RefData::activate()
     {
-        if (!(mFlags & Flag_SuppressActivate))
-            return true;
+        if (mFlags & Flag_SuppressActivate)
+        {
+            mFlags |= Flag_OnActivate|Flag_ActivationBuffered;
+            return false;
+        }
         else
         {
-            mFlags |= Flag_OnActivate;
-            return false;
+            return true;
         }
     }
 
     bool RefData::onActivate()
     {
+        bool ret = mFlags & Flag_OnActivate;
         mFlags |= Flag_SuppressActivate;
-
-        if (mFlags & Flag_OnActivate)
-        {
-            mFlags &= (~Flag_OnActivate);
-            return true;
-        }
-        return false;
+        mFlags &= (~Flag_OnActivate);
+        return ret;
     }
 
-    bool RefData::activateByScript()
+    const ESM::AnimationState& RefData::getAnimationState() const
     {
-        if (mFlags & Flag_SuppressActivate)
-        {
-            mFlags &= (~Flag_SuppressActivate);
-            return true;
-        }
-        else
-            return false;
+        return mAnimationState;
     }
+
+    ESM::AnimationState& RefData::getAnimationState()
+    {
+        return mAnimationState;
+    }
+
 }

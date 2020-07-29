@@ -1,11 +1,15 @@
 #ifndef GAME_MWMECHANICS_AIPACKAGE_H
 #define GAME_MWMECHANICS_AIPACKAGE_H
 
-#include "pathfinding.hpp"
-#include <components/esm/defs.hpp>
+#include <memory>
 
+#include <components/esm/defs.hpp>
+#include <components/detournavigator/areatype.hpp>
+
+#include "pathfinding.hpp"
 #include "obstacle.hpp"
 #include "aistate.hpp"
+#include "aipackagetypeid.hpp"
 
 namespace MWWorld
 {
@@ -24,36 +28,50 @@ namespace ESM
 
 namespace MWMechanics
 {
+    const float AI_REACTION_TIME = 0.25f;
 
     class CharacterController;
+    class PathgridGraph;
 
     /// \brief Base class for AI packages
     class AiPackage
     {
         public:
-            ///Enumerates the various AITypes availible.
-            enum TypeId {
-                TypeIdNone = -1,
-                TypeIdWander = 0,
-                TypeIdTravel = 1,
-                TypeIdEscort = 2,
-                TypeIdFollow = 3,
-                TypeIdActivate = 4,
+            struct Options
+            {
+                unsigned int mPriority = 0;
+                bool mUseVariableSpeed = false;
+                bool mSideWithTarget = false;
+                bool mFollowTargetThroughDoors = false;
+                bool mCanCancel = true;
+                bool mShouldCancelPreviousAi = true;
+                bool mRepeat = false;
+                bool mAlwaysActive = false;
 
-                // These 3 are not really handled as Ai Packages in the MW engine
-                TypeIdCombat = 5,
-                TypeIdPursue = 6,
-                TypeIdAvoidDoor = 7
+                constexpr Options withRepeat(bool value)
+                {
+                    mRepeat = value;
+                    return *this;
+                }
+
+                constexpr Options withShouldCancelPreviousAi(bool value)
+                {
+                    mShouldCancelPreviousAi = value;
+                    return *this;
+                }
             };
 
-            ///Default constructor
-            AiPackage();
+            AiPackage(AiPackageTypeId typeId, const Options& options);
 
-            ///Default Deconstructor
-            virtual ~AiPackage();
+            virtual ~AiPackage() = default;
+
+            static constexpr Options makeDefaultOptions()
+            {
+                return Options{};
+            }
 
             ///Clones the package
-            virtual AiPackage *clone() const = 0;
+            virtual std::unique_ptr<AiPackage> clone() const = 0;
 
             /// Updates and runs the package (Should run every frame)
             /// \return Package completed?
@@ -61,10 +79,13 @@ namespace MWMechanics
 
             /// Returns the TypeID of the AiPackage
             /// \see enum TypeId
-            virtual int getTypeId() const = 0;
+            AiPackageTypeId getTypeId() const { return mTypeId; }
 
             /// Higher number is higher priority (0 being the lowest)
-            virtual unsigned int getPriority() const {return 0;}
+            unsigned int getPriority() const { return mOptions.mPriority; }
+
+            /// Check if package use movement with variable speed
+            bool useVariableSpeed() const { return mOptions.mUseVariableSpeed; }
 
             virtual void writeState (ESM::AiSequence::AiSequence& sequence) const {}
 
@@ -74,28 +95,64 @@ namespace MWMechanics
             /// Get the target actor the AI is targeted at (not applicable to all AI packages, default return empty Ptr)
             virtual MWWorld::Ptr getTarget() const;
 
+            /// Get the destination point of the AI package (not applicable to all AI packages, default return (0, 0, 0))
+            virtual osg::Vec3f getDestination(const MWWorld::Ptr& actor) const { return osg::Vec3f(0, 0, 0); };
+
             /// Return true if having this AiPackage makes the actor side with the target in fights (default false)
-            virtual bool sideWithTarget() const;
+            bool sideWithTarget() const { return mOptions.mSideWithTarget; }
 
             /// Return true if the actor should follow the target through teleport doors (default false)
-            virtual bool followTargetThroughDoors() const;
+            bool followTargetThroughDoors() const { return mOptions.mFollowTargetThroughDoors; }
 
             /// Can this Ai package be canceled? (default true)
-            virtual bool canCancel() const;
+            bool canCancel() const { return mOptions.mCanCancel; }
 
             /// Upon adding this Ai package, should the Ai Sequence attempt to cancel previous Ai packages (default true)?
-            virtual bool shouldCancelPreviousAi() const;
+            bool shouldCancelPreviousAi() const { return mOptions.mShouldCancelPreviousAi; }
 
-            bool isTargetMagicallyHidden(const MWWorld::Ptr& target);
+            /// Return true if this package should repeat. Currently only used for Wander packages.
+            bool getRepeat() const { return mOptions.mRepeat; }
+
+            virtual osg::Vec3f getDestination() const { return osg::Vec3f(0, 0, 0); }
+
+            /// Return true if any loaded actor with this AI package must be active.
+            bool alwaysActive() const { return mOptions.mAlwaysActive; }
+
+            /// Reset pathfinding state
+            void reset();
+
+            /// Return if actor's rotation speed is sufficient to rotate to the destination pathpoint on the run. Otherwise actor should rotate while standing.
+            static bool isReachableRotatingOnTheRun(const MWWorld::Ptr& actor, const osg::Vec3f& dest);
 
         protected:
-            /// Causes the actor to attempt to walk to the specified location
+            /// Handles path building and shortcutting with obstacles avoiding
             /** \return If the actor has arrived at his destination **/
-            bool pathTo(const MWWorld::Ptr& actor, ESM::Pathgrid::Point dest, float duration);
+            bool pathTo(const MWWorld::Ptr& actor, const osg::Vec3f& dest, float duration, float destTolerance = 0.0f);
 
-            virtual bool doesPathNeedRecalc(ESM::Pathgrid::Point dest, const ESM::Cell *cell);
+            /// Check if there aren't any obstacles along the path to make shortcut possible
+            /// If a shortcut is possible then path will be cleared and filled with the destination point.
+            /// \param destInLOS If not nullptr function will return ray cast check result
+            /// \return If can shortcut the path
+            bool shortcutPath(const osg::Vec3f& startPoint, const osg::Vec3f& endPoint, const MWWorld::Ptr& actor,
+                              bool *destInLOS, bool isPathClear);
 
-            void evadeObstacles(const MWWorld::Ptr& actor, float duration, const ESM::Position& pos);
+            /// Check if the way to the destination is clear, taking into account actor speed
+            bool checkWayIsClearForActor(const osg::Vec3f& startPoint, const osg::Vec3f& endPoint, const MWWorld::Ptr& actor);
+
+            bool doesPathNeedRecalc(const osg::Vec3f& newDest, const MWWorld::Ptr& actor) const;
+
+            void evadeObstacles(const MWWorld::Ptr& actor);
+
+            void openDoors(const MWWorld::Ptr& actor);
+
+            const PathgridGraph& getPathGridGraph(const MWWorld::CellStore* cell);
+
+            DetourNavigator::Flags getNavigatorFlags(const MWWorld::Ptr& actor) const;
+
+            DetourNavigator::AreaCosts getAreaCosts(const MWWorld::Ptr& actor) const;
+
+            const AiPackageTypeId mTypeId;
+            const Options mOptions;
 
             // TODO: all this does not belong here, move into temporary storage
             PathFinder mPathFinder;
@@ -103,11 +160,17 @@ namespace MWMechanics
 
             float mTimer;
 
-            ESM::Pathgrid::Point mPrevDest;
+            std::string mTargetActorRefId;
+            mutable int mTargetActorId;
+
+            short mRotateOnTheRunChecks; // attempts to check rotation to the pathpoint on the run possibility
+
+            bool mIsShortcutting;   // if shortcutting at the moment
+            bool mShortcutProhibited; // shortcutting may be prohibited after unsuccessful attempt
+            osg::Vec3f mShortcutFailPos; // position of last shortcut fail
 
         private:
-            bool isNearInactiveCell(const ESM::Position& actorPos);
-
+            bool isNearInactiveCell(osg::Vec3f position);
     };
 }
 

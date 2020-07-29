@@ -10,8 +10,6 @@
 #include <osg/PositionAttitudeTransform>
 #include <osg/ClipNode>
 #include <osg/FrontFace>
-#include <osg/Shader>
-#include <osg/GLExtensions>
 
 #include <osgDB/ReadFile>
 
@@ -21,13 +19,20 @@
 #include <osgUtil/IncrementalCompileOperation>
 #include <osgUtil/CullVisitor>
 
+#include <components/debug/debuglog.hpp>
+
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/imagemanager.hpp>
+#include <components/resource/scenemanager.hpp>
+
+#include <components/sceneutil/shadow.hpp>
+#include <components/sceneutil/waterutil.hpp>
+
+#include <components/misc/constants.hpp>
 
 #include <components/nifosg/controller.hpp>
-#include <components/sceneutil/controller.hpp>
 
-#include <components/settings/settings.hpp>
+#include <components/shader/shadermanager.hpp>
 
 #include <components/esm/loadcell.hpp>
 
@@ -39,58 +44,6 @@
 #include "ripplesimulation.hpp"
 #include "renderbin.hpp"
 #include "util.hpp"
-
-namespace
-{
-
-    osg::ref_ptr<osg::Geometry> createWaterGeometry(float size, int segments, float textureRepeats)
-    {
-        osg::ref_ptr<osg::Vec3Array> verts (new osg::Vec3Array);
-        osg::ref_ptr<osg::Vec2Array> texcoords (new osg::Vec2Array);
-
-        // some drivers don't like huge triangles, so we do some subdivisons
-        // a paged solution would be even better
-        const float step = size/segments;
-        const float texCoordStep = textureRepeats / segments;
-        for (int x=0; x<segments; ++x)
-        {
-            for (int y=0; y<segments; ++y)
-            {
-                float x1 = -size/2.f + x*step;
-                float y1 = -size/2.f + y*step;
-                float x2 = x1 + step;
-                float y2 = y1 + step;
-
-                verts->push_back(osg::Vec3f(x1, y2, 0.f));
-                verts->push_back(osg::Vec3f(x1, y1, 0.f));
-                verts->push_back(osg::Vec3f(x2, y1, 0.f));
-                verts->push_back(osg::Vec3f(x2, y2, 0.f));
-
-                float u1 = x*texCoordStep;
-                float v1 = y*texCoordStep;
-                float u2 = u1 + texCoordStep;
-                float v2 = v1 + texCoordStep;
-
-                texcoords->push_back(osg::Vec2f(u1, v2));
-                texcoords->push_back(osg::Vec2f(u1, v1));
-                texcoords->push_back(osg::Vec2f(u2, v1));
-                texcoords->push_back(osg::Vec2f(u2, v2));
-            }
-        }
-
-        osg::ref_ptr<osg::Geometry> waterGeom (new osg::Geometry);
-        waterGeom->setVertexArray(verts);
-        waterGeom->setTexCoordArray(0, texcoords);
-
-        osg::ref_ptr<osg::Vec3Array> normal (new osg::Vec3Array);
-        normal->push_back(osg::Vec3f(0,0,1));
-        waterGeom->setNormalArray(normal, osg::Array::BIND_OVERALL);
-
-        waterGeom->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::QUADS,0,verts->size()));
-        return waterGeom;
-    }
-
-}
 
 namespace MWRender
 {
@@ -208,8 +161,25 @@ private:
     osg::Plane mPlane;
 };
 
+/// This callback on the Camera has the effect of a RELATIVE_RF_INHERIT_VIEWPOINT transform mode (which does not exist in OSG).
+/// We want to keep the View Point of the parent camera so we will not have to recreate LODs.
+class InheritViewPointCallback : public osg::NodeCallback
+{
+public:
+        InheritViewPointCallback() {}
+
+    virtual void operator()(osg::Node* node, osg::NodeVisitor* nv)
+    {
+        osgUtil::CullVisitor* cv = static_cast<osgUtil::CullVisitor*>(nv);
+        osg::ref_ptr<osg::RefMatrix> modelViewMatrix = new osg::RefMatrix(*cv->getModelViewMatrix());
+        cv->popModelViewMatrix();
+        cv->pushModelViewMatrix(modelViewMatrix, osg::Transform::ABSOLUTE_RF_INHERIT_VIEWPOINT);
+        traverse(node, nv);
+    }
+};
+
 /// Moves water mesh away from the camera slightly if the camera gets too close on the Z axis.
-/// The offset works around graphics artifacts that occured with the GL_DEPTH_CLAMP when the camera gets extremely close to the mesh (seen on NVIDIA at least).
+/// The offset works around graphics artifacts that occurred with the GL_DEPTH_CLAMP when the camera gets extremely close to the mesh (seen on NVIDIA at least).
 /// Must be added as a Cull callback.
 class FudgeCallback : public osg::NodeCallback
 {
@@ -238,45 +208,22 @@ public:
     }
 };
 
-osg::ref_ptr<osg::Shader> readShader (osg::Shader::Type type, const std::string& file, const std::map<std::string, std::string>& defineMap = std::map<std::string, std::string>())
-{
-    osg::ref_ptr<osg::Shader> shader (new osg::Shader(type));
-
-    // use boost in favor of osg::Shader::readShaderFile, to handle utf-8 path issues on Windows
-    boost::filesystem::ifstream inStream;
-    inStream.open(boost::filesystem::path(file));
-    std::stringstream strstream;
-    strstream << inStream.rdbuf();
-
-    std::string shaderSource = strstream.str();
-
-    for (std::map<std::string, std::string>::const_iterator it = defineMap.begin(); it != defineMap.end(); ++it)
-    {
-        size_t pos = shaderSource.find(it->first);
-        if (pos != std::string::npos)
-            shaderSource.replace(pos, it->first.length(), it->second);
-    }
-
-    shader->setShaderSource(shaderSource);
-    return shader;
-}
-
 osg::ref_ptr<osg::Image> readPngImage (const std::string& file)
 {
     // use boost in favor of osgDB::readImage, to handle utf-8 path issues on Windows
     boost::filesystem::ifstream inStream;
     inStream.open(file, std::ios_base::in | std::ios_base::binary);
     if (inStream.fail())
-        std::cerr << "Failed to open " << file << std::endl;
+        Log(Debug::Error) << "Error: Failed to open " << file;
     osgDB::ReaderWriter* reader = osgDB::Registry::instance()->getReaderWriterForExtension("png");
     if (!reader)
     {
-        std::cerr << "Failed to read " << file << ", no png readerwriter found" << std::endl;
+        Log(Debug::Error) << "Error: Failed to read " << file << ", no png readerwriter found";
         return osg::ref_ptr<osg::Image>();
     }
     osgDB::ReaderWriter::ReadResult result = reader->readImage(inStream);
     if (!result.success())
-        std::cerr << "Failed to read " << file << ": " << result.message() << " code " << result.status() << std::endl;
+        Log(Debug::Error) << "Error: Failed to read " << file << ": " << result.message() << " code " << result.status();
 
     return result.getImage();
 }
@@ -292,8 +239,11 @@ public:
         setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
         setReferenceFrame(osg::Camera::RELATIVE_RF);
+        setSmallFeatureCullingPixelSize(Settings::Manager::getInt("small feature culling pixel size", "Water"));
+        setName("RefractionCamera");
+        setCullCallback(new InheritViewPointCallback);
 
-        setCullMask(Mask_Effect|Mask_Scene|Mask_Terrain|Mask_Actor|Mask_ParticleSystem|Mask_Sky|Mask_Sun|Mask_Player|Mask_Lighting);
+        setCullMask(Mask_Effect|Mask_Scene|Mask_Object|Mask_Static|Mask_Terrain|Mask_Actor|Mask_ParticleSystem|Mask_Sky|Mask_Sun|Mask_Player|Mask_Lighting);
         setNodeMask(Mask_RenderToTexture);
         setViewport(0, 0, rttSize, rttSize);
 
@@ -323,6 +273,7 @@ public:
         attach(osg::Camera::COLOR_BUFFER, mRefractionTexture);
 
         mRefractionDepthTexture = new osg::Texture2D;
+        mRefractionDepthTexture->setTextureSize(rttSize, rttSize);
         mRefractionDepthTexture->setSourceFormat(GL_DEPTH_COMPONENT);
         mRefractionDepthTexture->setInternalFormat(GL_DEPTH_COMPONENT24);
         mRefractionDepthTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -332,6 +283,8 @@ public:
         mRefractionDepthTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
 
         attach(osg::Camera::DEPTH_BUFFER, mRefractionDepthTexture);
+
+        SceneUtil::ShadowManager::disableShadowsForStateSet(getOrCreateStateSet());
     }
 
     void setScene(osg::Node* scene)
@@ -344,6 +297,12 @@ public:
 
     void setWaterLevel(float waterLevel)
     {
+        const float refractionScale = std::min(1.0f,std::max(0.0f,
+            Settings::Manager::getFloat("refraction scale", "Water")));
+
+        setViewMatrix(osg::Matrix::scale(1,1,refractionScale) *
+            osg::Matrix::translate(0,0,(1.0 - refractionScale) * waterLevel));
+
         mClipCullNode->setPlane(osg::Plane(osg::Vec3d(0,0,-1), osg::Vec3d(0,0, waterLevel)));
     }
 
@@ -367,16 +326,17 @@ private:
 class Reflection : public osg::Camera
 {
 public:
-    Reflection()
+    Reflection(bool isInterior)
     {
         setRenderOrder(osg::Camera::PRE_RENDER);
         setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
         setReferenceFrame(osg::Camera::RELATIVE_RF);
+        setSmallFeatureCullingPixelSize(Settings::Manager::getInt("small feature culling pixel size", "Water"));
+        setName("ReflectionCamera");
+        setCullCallback(new InheritViewPointCallback);
 
-        bool reflectActors = Settings::Manager::getBool("reflect actors", "Water");
-
-        setCullMask(Mask_Effect|Mask_Scene|Mask_Terrain|Mask_ParticleSystem|Mask_Sky|Mask_Player|Mask_Lighting|(reflectActors ? Mask_Actor : 0));
+        setInterior(isInterior);
         setNodeMask(Mask_RenderToTexture);
 
         unsigned int rttSize = Settings::Manager::getInt("rtt size", "Water");
@@ -387,6 +347,7 @@ public:
         setUpdateCallback(new NoTraverseCallback);
 
         mReflectionTexture = new osg::Texture2D;
+        mReflectionTexture->setTextureSize(rttSize, rttSize);
         mReflectionTexture->setInternalFormat(GL_RGB);
         mReflectionTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
         mReflectionTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
@@ -402,12 +363,25 @@ public:
 
         mClipCullNode = new ClipCullNode;
         addChild(mClipCullNode);
+
+        SceneUtil::ShadowManager::disableShadowsForStateSet(getOrCreateStateSet());
+    }
+
+    void setInterior(bool isInterior)
+    {
+        int reflectionDetail = Settings::Manager::getInt("reflection detail", "Water");
+        reflectionDetail = std::min(4, std::max(isInterior ? 2 : 0, reflectionDetail));
+        unsigned int extraMask = 0;
+        if(reflectionDetail >= 1) extraMask |= Mask_Terrain;
+        if(reflectionDetail >= 2) extraMask |= Mask_Static;
+        if(reflectionDetail >= 3) extraMask |= Mask_Effect|Mask_ParticleSystem|Mask_Object;
+        if(reflectionDetail >= 4) extraMask |= Mask_Player|Mask_Actor;
+        setCullMask(Mask_Scene|Mask_Sky|Mask_Lighting|extraMask);
     }
 
     void setWaterLevel(float waterLevel)
     {
-        setViewMatrix(osg::Matrix::translate(0,0,-waterLevel) * osg::Matrix::scale(1,1,-1) * osg::Matrix::translate(0,0,waterLevel));
-
+        setViewMatrix(osg::Matrix::scale(1,1,-1) * osg::Matrix::translate(0,0,2 * waterLevel));
         mClipCullNode->setPlane(osg::Plane(osg::Vec3d(0,0,1), osg::Vec3d(0,0,waterLevel)));
     }
 
@@ -452,61 +426,97 @@ public:
     }
 };
 
-Water::Water(osg::Group *parent, osg::Group* sceneRoot, Resource::ResourceSystem *resourceSystem, osgUtil::IncrementalCompileOperation *ico,
-             const Fallback::Map* fallback, const std::string& resourcePath)
+Water::Water(osg::Group *parent, osg::Group* sceneRoot, Resource::ResourceSystem *resourceSystem,
+             osgUtil::IncrementalCompileOperation *ico, const std::string& resourcePath)
     : mParent(parent)
     , mSceneRoot(sceneRoot)
     , mResourceSystem(resourceSystem)
-    , mFallback(fallback)
     , mResourcePath(resourcePath)
     , mEnabled(true)
     , mToggled(true)
     , mTop(0)
+    , mInterior(false)
+    , mCullCallback(nullptr)
 {
-    mSimulation.reset(new RippleSimulation(parent, resourceSystem, fallback));
+    mSimulation.reset(new RippleSimulation(mSceneRoot, resourceSystem));
 
-    mWaterGeom = createWaterGeometry(CELL_SIZE*150, 40, 900);
+    mWaterGeom = SceneUtil::createWaterGeometry(Constants::CellSizeInUnits*150, 40, 900);
     mWaterGeom->setDrawCallback(new DepthClampCallback);
     mWaterGeom->setNodeMask(Mask_Water);
 
-    if (ico)
-        ico->add(mWaterGeom);
-
     mWaterNode = new osg::PositionAttitudeTransform;
+    mWaterNode->setName("Water Root");
     mWaterNode->addChild(mWaterGeom);
     mWaterNode->addCullCallback(new FudgeCallback);
 
     // simple water fallback for the local map
     osg::ref_ptr<osg::Geometry> geom2 (osg::clone(mWaterGeom.get(), osg::CopyOp::DEEP_COPY_NODES));
-    createSimpleWaterStateSet(geom2, mFallback->getFallbackFloat("Water_Map_Alpha"));
+    createSimpleWaterStateSet(geom2, Fallback::Map::getFloat("Water_Map_Alpha"));
     geom2->setNodeMask(Mask_SimpleWater);
     mWaterNode->addChild(geom2);
-
+ 
     mSceneRoot->addChild(mWaterNode);
 
     setHeight(mTop);
 
+    mRainIntensityUniform = new osg::Uniform("rainIntensity",(float) 0.0);
+
     updateWaterMaterial();
+
+    if (ico)
+        ico->add(mWaterNode);
+}
+
+void Water::setCullCallback(osg::Callback* callback)
+{
+    if (mCullCallback)
+    {
+        mWaterNode->removeCullCallback(mCullCallback);
+        if (mReflection)
+            mReflection->removeCullCallback(mCullCallback);
+        if (mRefraction)
+            mRefraction->removeCullCallback(mCullCallback);
+    }
+
+    mCullCallback = callback;
+
+    if (callback)
+    {
+        mWaterNode->addCullCallback(callback);
+        if (mReflection)
+            mReflection->addCullCallback(callback);
+        if (mRefraction)
+            mRefraction->addCullCallback(callback);
+    }
+}
+
+osg::Uniform *Water::getRainIntensityUniform()
+{
+    return mRainIntensityUniform.get();
 }
 
 void Water::updateWaterMaterial()
 {
     if (mReflection)
     {
+        mReflection->removeChildren(0, mReflection->getNumChildren());
         mParent->removeChild(mReflection);
-        mReflection = NULL;
+        mReflection = nullptr;
     }
     if (mRefraction)
     {
+        mRefraction->removeChildren(0, mRefraction->getNumChildren());
         mParent->removeChild(mRefraction);
-        mRefraction = NULL;
+        mRefraction = nullptr;
     }
 
     if (Settings::Manager::getBool("shader", "Water"))
     {
-        mReflection = new Reflection;
+        mReflection = new Reflection(mInterior);
         mReflection->setWaterLevel(mTop);
         mReflection->setScene(mSceneRoot);
+        if (mCullCallback)
+            mReflection->addCullCallback(mCullCallback);
         mParent->addChild(mReflection);
 
         if (Settings::Manager::getBool("refraction", "Water"))
@@ -514,42 +524,39 @@ void Water::updateWaterMaterial()
             mRefraction = new Refraction;
             mRefraction->setWaterLevel(mTop);
             mRefraction->setScene(mSceneRoot);
+            if (mCullCallback)
+                mRefraction->addCullCallback(mCullCallback);
             mParent->addChild(mRefraction);
         }
 
         createShaderWaterStateSet(mWaterGeom, mReflection, mRefraction);
     }
     else
-        createSimpleWaterStateSet(mWaterGeom, mFallback->getFallbackFloat("Water_World_Alpha"));
+        createSimpleWaterStateSet(mWaterGeom, Fallback::Map::getFloat("Water_World_Alpha"));
 
     updateVisible();
 }
 
+osg::Camera *Water::getReflectionCamera()
+{
+    return mReflection;
+}
+
+osg::Camera *Water::getRefractionCamera()
+{
+    return mRefraction;
+}
+
 void Water::createSimpleWaterStateSet(osg::Node* node, float alpha)
 {
-    osg::ref_ptr<osg::StateSet> stateset (new osg::StateSet);
-
-    osg::ref_ptr<osg::Material> material (new osg::Material);
-    material->setEmission(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 1.f));
-    material->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, alpha));
-    material->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
-    material->setColorMode(osg::Material::OFF);
-    stateset->setAttributeAndModes(material, osg::StateAttribute::ON);
-
-    stateset->setMode(GL_BLEND, osg::StateAttribute::ON);
-    stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
-
-    osg::ref_ptr<osg::Depth> depth (new osg::Depth);
-    depth->setWriteMask(false);
-    stateset->setAttributeAndModes(depth, osg::StateAttribute::ON);
-
-    stateset->setRenderBinDetails(MWRender::RenderBin_Water, "RenderBin");
+    osg::ref_ptr<osg::StateSet> stateset = SceneUtil::createSimpleWaterStateSet(alpha, MWRender::RenderBin_Water);
 
     node->setStateSet(stateset);
 
+    // Add animated textures
     std::vector<osg::ref_ptr<osg::Texture2D> > textures;
-    int frameCount = mFallback->getFallbackInt("Water_SurfaceFrameCount");
-    std::string texture = mFallback->getFallbackString("Water_SurfaceTexture");
+    int frameCount = std::max(0, std::min(Fallback::Map::getInt("Water_SurfaceFrameCount"), 320));
+    const std::string& texture = Fallback::Map::getString("Water_SurfaceTexture");
     for (int i=0; i<frameCount; ++i)
     {
         std::ostringstream texname;
@@ -563,25 +570,35 @@ void Water::createSimpleWaterStateSet(osg::Node* node, float alpha)
     if (textures.empty())
         return;
 
-    float fps = mFallback->getFallbackFloat("Water_SurfaceFPS");
+    float fps = Fallback::Map::getFloat("Water_SurfaceFPS");
 
     osg::ref_ptr<NifOsg::FlipController> controller (new NifOsg::FlipController(0, 1.f/fps, textures));
-    controller->setSource(boost::shared_ptr<SceneUtil::ControllerSource>(new SceneUtil::FrameTimeSource));
+    controller->setSource(std::shared_ptr<SceneUtil::ControllerSource>(new SceneUtil::FrameTimeSource));
     node->setUpdateCallback(controller);
 
     stateset->setTextureAttributeAndModes(0, textures[0], osg::StateAttribute::ON);
+
+    // use a shader to render the simple water, ensuring that fog is applied per pixel as required.
+    // this could be removed if a more detailed water mesh, using some sort of paging solution, is implemented.
+    Resource::SceneManager* sceneManager = mResourceSystem->getSceneManager();
+    bool oldValue = sceneManager->getForceShaders();
+    sceneManager->setForceShaders(true);
+    sceneManager->recreateShaders(node);
+    sceneManager->setForceShaders(oldValue);
 }
 
 void Water::createShaderWaterStateSet(osg::Node* node, Reflection* reflection, Refraction* refraction)
 {
     // use a define map to conditionally compile the shader
     std::map<std::string, std::string> defineMap;
-    defineMap.insert(std::make_pair(std::string("@refraction_enabled"), std::string(refraction ? "1" : "0")));
+    defineMap.insert(std::make_pair(std::string("refraction_enabled"), std::string(refraction ? "1" : "0")));
 
-    osg::ref_ptr<osg::Shader> vertexShader (readShader(osg::Shader::VERTEX, mResourcePath + "/shaders/water_vertex.glsl", defineMap));
-    osg::ref_ptr<osg::Shader> fragmentShader (readShader(osg::Shader::FRAGMENT, mResourcePath + "/shaders/water_fragment.glsl", defineMap));
+    Shader::ShaderManager& shaderMgr = mResourceSystem->getSceneManager()->getShaderManager();
+    osg::ref_ptr<osg::Shader> vertexShader (shaderMgr.getShader("water_vertex.glsl", defineMap, osg::Shader::VERTEX));
+    osg::ref_ptr<osg::Shader> fragmentShader (shaderMgr.getShader("water_fragment.glsl", defineMap, osg::Shader::FRAGMENT));
 
     osg::ref_ptr<osg::Texture2D> normalMap (new osg::Texture2D(readPngImage(mResourcePath + "/shaders/water_nm.png")));
+
     if (normalMap->getImage())
         normalMap->getImage()->flipVertical();
     normalMap->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
@@ -596,6 +613,7 @@ void Water::createShaderWaterStateSet(osg::Node* node, Reflection* reflection, R
 
     shaderStateset->setTextureAttributeAndModes(0, normalMap, osg::StateAttribute::ON);
     shaderStateset->setTextureAttributeAndModes(1, reflection->getReflectionTexture(), osg::StateAttribute::ON);
+
     if (refraction)
     {
         shaderStateset->setTextureAttributeAndModes(2, refraction->getRefractionTexture(), osg::StateAttribute::ON);
@@ -617,13 +635,15 @@ void Water::createShaderWaterStateSet(osg::Node* node, Reflection* reflection, R
 
     shaderStateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
 
+    shaderStateset->addUniform(mRainIntensityUniform.get());
+
     osg::ref_ptr<osg::Program> program (new osg::Program);
     program->addShader(vertexShader);
     program->addShader(fragmentShader);
     shaderStateset->setAttributeAndModes(program, osg::StateAttribute::ON);
 
     node->setStateSet(shaderStateset);
-    node->setUpdateCallback(NULL);
+    node->setUpdateCallback(nullptr);
 }
 
 void Water::processChangedSettings(const Settings::CategorySettingVector& settings)
@@ -637,20 +657,22 @@ Water::~Water()
 
     if (mReflection)
     {
+        mReflection->removeChildren(0, mReflection->getNumChildren());
         mParent->removeChild(mReflection);
-        mReflection = NULL;
+        mReflection = nullptr;
     }
     if (mRefraction)
     {
+        mRefraction->removeChildren(0, mRefraction->getNumChildren());
         mParent->removeChild(mRefraction);
-        mRefraction = NULL;
+        mRefraction = nullptr;
     }
 }
 
 void Water::listAssetsToPreload(std::vector<std::string> &textures)
 {
-    int frameCount = mFallback->getFallbackInt("Water_SurfaceFrameCount");
-    std::string texture = mFallback->getFallbackString("Water_SurfaceTexture");
+    int frameCount = std::max(0, std::min(Fallback::Map::getInt("Water_SurfaceFrameCount"), 320));
+    const std::string& texture = Fallback::Map::getString("Water_SurfaceTexture");
     for (int i=0; i<frameCount; ++i)
     {
         std::ostringstream texname;
@@ -667,10 +689,20 @@ void Water::setEnabled(bool enabled)
 
 void Water::changeCell(const MWWorld::CellStore* store)
 {
-    if (store->getCell()->isExterior())
+    bool isInterior = !store->getCell()->isExterior();
+    bool wasInterior = mInterior;
+    if (!isInterior)
+    {
         mWaterNode->setPosition(getSceneNodeCoordinates(store->getCell()->mData.mX, store->getCell()->mData.mY));
+        mInterior = false;
+    }
     else
+    {
         mWaterNode->setPosition(osg::Vec3f(0,0,mTop));
+        mInterior = true;
+    }
+    if(mInterior != wasInterior && mReflection)
+        mReflection->setInterior(mInterior);
 
     // create a new StateSet to prevent threading issues
     osg::ref_ptr<osg::StateSet> nodeStateSet (new osg::StateSet);
@@ -723,7 +755,8 @@ bool Water::isUnderwater(const osg::Vec3f &pos) const
 
 osg::Vec3f Water::getSceneNodeCoordinates(int gridX, int gridY)
 {
-    return osg::Vec3f(static_cast<float>(gridX * CELL_SIZE + (CELL_SIZE / 2)), static_cast<float>(gridY * CELL_SIZE + (CELL_SIZE / 2)), mTop);
+    return osg::Vec3f(static_cast<float>(gridX * Constants::CellSizeInUnits + (Constants::CellSizeInUnits / 2)),
+                      static_cast<float>(gridY * Constants::CellSizeInUnits + (Constants::CellSizeInUnits / 2)), mTop);
 }
 
 void Water::addEmitter (const MWWorld::Ptr& ptr, float scale, float force)

@@ -75,6 +75,8 @@ namespace Compiler
     namespace Cell
     {
         const int opcodeCellChanged = 0x2000000;
+        const int opcodeTestCells = 0x200030e;
+        const int opcodeTestInteriorCells = 0x200030f;
         const int opcodeCOC = 0x2000026;
         const int opcodeCOE = 0x2000226;
         const int opcodeGetInterior = 0x2000131;
@@ -150,6 +152,7 @@ namespace Compiler
     namespace Dialogue
     {
         const int opcodeJournal = 0x2000133;
+        const int opcodeJournalExplicit = 0x200030b;
         const int opcodeSetJournalIndex = 0x2000134;
         const int opcodeGetJournalIndex = 0x2000135;
         const int opcodeAddTopic = 0x200013a;
@@ -200,6 +203,7 @@ namespace Compiler
     {
         const int opcodeXBox = 0x200000c;
         const int opcodeOnActivate = 0x200000d;
+        const int opcodeOnActivateExplicit = 0x2000306;
         const int opcodeActivate = 0x2000075;
         const int opcodeActivateExplicit = 0x2000244;
         const int opcodeLock = 0x20004;
@@ -292,6 +296,28 @@ namespace Compiler
         const int opcodeRemoveFromLevCreature = 0x20002fc;
         const int opcodeAddToLevItem = 0x20002fd;
         const int opcodeRemoveFromLevItem = 0x20002fe;
+        const int opcodeShowSceneGraph = 0x2002f;
+        const int opcodeShowSceneGraphExplicit = 0x20030;
+        const int opcodeToggleBorders = 0x2000307;
+        const int opcodeToggleNavMesh = 0x2000308;
+        const int opcodeToggleActorsPaths = 0x2000309;
+        const int opcodeSetNavMeshNumberToRender = 0x200030a;
+        const int opcodeRepairedOnMe = 0x200030c;
+        const int opcodeRepairedOnMeExplicit = 0x200030d;
+        const int opcodeToggleRecastMesh = 0x2000310;
+        const int opcodeMenuMode = 0x2000311;
+        const int opcodeRandom = 0x2000312;
+        const int opcodeScriptRunning = 0x2000313;
+        const int opcodeStartScript = 0x2000314;
+        const int opcodeStopScript = 0x2000315;
+        const int opcodeGetSecondsPassed = 0x2000316;
+        const int opcodeEnable = 0x2000317;
+        const int opcodeDisable = 0x2000318;
+        const int opcodeGetDisabled = 0x2000319;
+        const int opcodeEnableExplicit = 0x200031a;
+        const int opcodeDisableExplicit = 0x200031b;
+        const int opcodeGetDisabledExplicit = 0x200031c;
+        const int opcodeStartScriptExplicit = 0x200031d;
     }
 
     namespace Sky
@@ -500,7 +526,8 @@ namespace Compiler
         const int opcodeMoveWorldExplicit = 0x2000209;
         const int opcodeResetActors = 0x20002f4;
         const int opcodeFixme = 0x2000302;
-        const int opcodeFixmeExplicit = 0x2000303;
+        const int opcodeGetDistance = 0x200031e;
+        const int opcodeGetDistanceExplicit = 0x200031f;
     }
 
     namespace User

@@ -30,6 +30,15 @@ public:
     virtual void mouseMoved( const MouseMotionEvent &arg ) = 0;
     virtual void mousePressed( const SDL_MouseButtonEvent &arg, Uint8 id ) = 0;
     virtual void mouseReleased( const SDL_MouseButtonEvent &arg, Uint8 id ) = 0;
+    virtual void mouseWheelMoved( const SDL_MouseWheelEvent &arg) = 0;
+};
+
+class SensorListener
+{
+public:
+    virtual ~SensorListener() {}
+    virtual void sensorUpdated(const SDL_SensorEvent &arg) = 0;
+    virtual void displayOrientationChanged() = 0;
 };
 
 class KeyListener
@@ -69,9 +78,6 @@ public:
 
     /** @remarks The window's visibility changed */
     virtual void windowVisibilityChange( bool visible ) {}
-
-    /** @remarks The window got / lost input focus */
-    virtual void windowFocusChange( bool have_focus ) {}
 
     virtual void windowClosed () {}
 

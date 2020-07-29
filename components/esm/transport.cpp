@@ -1,5 +1,7 @@
 #include "transport.hpp"
 
+#include <components/debug/debuglog.hpp>
+
 #include <components/esm/esmreader.hpp>
 #include <components/esm/esmwriter.hpp>
 
@@ -8,15 +10,19 @@ namespace ESM
 
     void Transport::add(ESMReader &esm)
     {
-        if (esm.retSubName().val == ESM::FourCC<'D','O','D','T'>::value)
+        if (esm.retSubName().intval == ESM::FourCC<'D','O','D','T'>::value)
         {
             Dest dodt;
             esm.getHExact(&dodt.mPos, 24);
             mList.push_back(dodt);
         }
-        else if (esm.retSubName().val == ESM::FourCC<'D','N','A','M'>::value)
+        else if (esm.retSubName().intval == ESM::FourCC<'D','N','A','M'>::value)
         {
-            mList.back().mCellName = esm.getHString();
+            const std::string name = esm.getHString();
+            if (mList.empty())
+                Log(Debug::Warning) << "Encountered DNAM record without DODT record, skipped.";
+            else
+                mList.back().mCellName = name;
         }
     }
 

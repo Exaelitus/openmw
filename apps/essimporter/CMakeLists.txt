@@ -16,6 +16,8 @@ set(ESSIMPORTER_FILES
     importjour.cpp
     importscri.cpp
     importscpt.cpp
+    importproj.cpp
+    importsplm.cpp
     importercontext.cpp
     converter.cpp
     convertacdt.cpp
@@ -28,7 +30,7 @@ set(ESSIMPORTER_FILES
     convertplayer.cpp
 )
 
-add_executable(openmw-essimporter
+openmw_add_executable(openmw-essimporter
     ${ESSIMPORTER_FILES}
 )
 
@@ -42,3 +44,7 @@ if (BUILD_WITH_CODE_COVERAGE)
   add_definitions (--coverage)
   target_link_libraries(openmw-essimporter gcov)
 endif()
+
+if (WIN32)
+  INSTALL(TARGETS openmw-essimporter RUNTIME DESTINATION ".")
+endif(WIN32)

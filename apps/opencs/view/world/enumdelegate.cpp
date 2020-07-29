@@ -110,7 +110,7 @@ void CSVWorld::EnumDelegate::paint (QPainter *painter, const QStyleOptionViewIte
     int valueIndex = getValueIndex(index);
     if (valueIndex != -1)
     {
-        QStyleOptionViewItemV4 itemOption(option);
+        QStyleOptionViewItem itemOption(option);
         itemOption.text = mValues.at(valueIndex).second;
         QApplication::style()->drawControl(QStyle::CE_ItemViewItem, &itemOption, painter);
     }
@@ -130,8 +130,7 @@ QSize CSVWorld::EnumDelegate::sizeHint(const QStyleOptionViewItem &option, const
         itemOption.state = option.state;
 
         const QString &valueText = mValues.at(valueIndex).second;
-        QSize valueSize = QSize(itemOption.fontMetrics.width(valueText), itemOption.fontMetrics.height());
-
+        QSize valueSize = QSize(itemOption.fontMetrics.horizontalAdvance(valueText), itemOption.fontMetrics.height());
         itemOption.currentText = valueText;
         return QApplication::style()->sizeFromContents(QStyle::CT_ComboBox, &itemOption, valueSize);
     }
@@ -151,7 +150,7 @@ CSVWorld::EnumDelegateFactory::EnumDelegateFactory (const char **names, bool all
         add (i, names[i]);
 }
 
-CSVWorld::EnumDelegateFactory::EnumDelegateFactory (const std::vector<std::string>& names,
+CSVWorld::EnumDelegateFactory::EnumDelegateFactory (const std::vector<std::pair<int,std::string>>& names,
     bool allowNone)
 {
     if (allowNone)
@@ -160,7 +159,7 @@ CSVWorld::EnumDelegateFactory::EnumDelegateFactory (const std::vector<std::strin
     int size = static_cast<int> (names.size());
 
     for (int i=0; i<size; ++i)
-        add (i, names[i].c_str());
+        add (names[i].first, names[i].second.c_str());
 }
 
 CSVWorld::CommandDelegate *CSVWorld::EnumDelegateFactory::makeDelegate (
@@ -171,5 +170,16 @@ CSVWorld::CommandDelegate *CSVWorld::EnumDelegateFactory::makeDelegate (
 
 void CSVWorld::EnumDelegateFactory::add (int value, const QString& name)
 {
-    mValues.push_back (std::make_pair (value, name));
+    auto pair = std::make_pair (value, name);
+
+    for (auto it=mValues.begin(); it!=mValues.end(); ++it)
+    {
+        if (it->second > name)
+        {
+            mValues.insert(it, pair);
+            return;
+        }
+    }
+
+    mValues.push_back(std::make_pair (value, name));
 }

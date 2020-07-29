@@ -34,6 +34,9 @@ namespace MWWorld
         // Id of object being referenced
         std::string getRefId() const;
 
+        // Pointer to ID of the object being referenced
+        const std::string* getRefIdPtr() const;
+
         // For doors - true if this door teleports to somewhere else, false
         // if it should open through animation.
         bool getTeleport() const;
@@ -56,6 +59,9 @@ namespace MWWorld
         // Remaining enchantment charge. This could be -1 if the charge was not touched yet (i.e. full).
         float getEnchantmentCharge() const;
 
+        // Remaining enchantment charge rescaled to the supplied maximum charge (such as one of the enchantment).
+        float getNormalizedEnchantmentCharge(int maxCharge) const;
+
         void setEnchantmentCharge(float charge);
 
         // For weapon or armor, this is the remaining item health.
@@ -65,6 +71,7 @@ namespace MWWorld
         float getChargeFloat() const; // Implemented as union with int charge
         void setCharge(int charge);
         void setChargeFloat(float charge);
+        void applyChargeRemainderToBeSubtracted(float chargeRemainder); // Stores remainders and applies if > 1
 
         // The NPC that owns this object (and will get angry if you steal it)
         std::string getOwner() const;
@@ -95,6 +102,8 @@ namespace MWWorld
         // For an unlocked door, it is set to -(previous locklevel)
         int getLockLevel() const;
         void setLockLevel(int lockLevel);
+        void lock(int lockLevel);
+        void unlock();
          // Key and trap ID names, if any
         std::string getKey() const;
         std::string getTrap() const;

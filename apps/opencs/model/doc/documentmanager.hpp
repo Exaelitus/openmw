@@ -11,8 +11,7 @@
 
 #include <components/to_utf8/to_utf8.hpp>
 #include <components/fallback/fallback.hpp>
-
-#include "../world/resourcesmanager.hpp"
+#include <components/files/multidircollection.hpp>
 
 #include "loader.hpp"
 
@@ -39,9 +38,13 @@ namespace CSMDoc
             QThread mLoaderThread;
             Loader mLoader;
             ToUTF8::FromType mEncoding;
-            CSMWorld::ResourcesManager mResourcesManager;
             std::vector<std::string> mBlacklistedScripts;
-            const VFS::Manager* mVFS;
+
+            boost::filesystem::path mResDir;
+
+            bool mFsStrict;
+            Files::PathContainer mDataPaths;
+            std::vector<std::string> mArchives;
 
             DocumentManager (const DocumentManager&);
             DocumentManager& operator= (const DocumentManager&);
@@ -68,20 +71,14 @@ namespace CSMDoc
 
             void setResourceDir (const boost::filesystem::path& parResDir);
 
-            void setFallbackMap (const std::map<std::string, std::string>& fallbackMap);
-
             void setEncoding (ToUTF8::FromType encoding);
 
             void setBlacklistedScripts (const std::vector<std::string>& scriptIds);
 
-            void setVFS(const VFS::Manager* vfs);
+            /// Sets the file data that gets passed to newly created documents.
+            void setFileData(bool strict, const Files::PathContainer& dataPaths, const std::vector<std::string>& archives);
 
             bool isEmpty();
-
-        private:
-
-            boost::filesystem::path mResDir;
-            Fallback::Map mFallbackMap;
 
         private slots:
 

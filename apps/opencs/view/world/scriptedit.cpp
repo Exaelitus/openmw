@@ -7,12 +7,14 @@
 #include <QString>
 #include <QPainter>
 #include <QTextDocumentFragment>
+#include <QMenu>
 
 #include "../../model/doc/document.hpp"
 
 #include "../../model/world/universalid.hpp"
 #include "../../model/world/tablemimedata.hpp"
 #include "../../model/prefs/state.hpp"
+#include "../../model/prefs/shortcut.hpp"
 
 CSVWorld::ScriptEdit::ChangeLock::ChangeLock (ScriptEdit& edit) : mEdit (edit)
 {
@@ -48,11 +50,13 @@ CSVWorld::ScriptEdit::ScriptEdit(
     mLineNumberArea(0),
     mDefaultFont(font()),
     mMonoFont(QFont("Monospace")),
+    mTabCharCount(4),
+    mMarkOccurrences(true),
     mDocument(document),
     mWhiteListQoutes("^[a-z|_]{1}[a-z|0-9|_]{0,}$", Qt::CaseInsensitive)
 {
     wrapLines(false);
-    setTabStopWidth (4);
+    setTabWidth();
     setUndoRedoEnabled (false); // we use OpenCS-wide undo/redo instead
 
     mAllowedTypes <<CSMWorld::UniversalId::Type_Journal
@@ -84,6 +88,18 @@ CSVWorld::ScriptEdit::ScriptEdit(
                   <<CSMWorld::UniversalId::Type_Weapon
                   <<CSMWorld::UniversalId::Type_Script
                   <<CSMWorld::UniversalId::Type_Region;
+    
+    connect(this, SIGNAL(cursorPositionChanged()), this, SLOT(markOccurrences()));
+
+    mCommentAction = new QAction (tr ("Comment Selection"), this);
+    connect(mCommentAction, SIGNAL (triggered()), this, SLOT (commentSelection()));
+    CSMPrefs::Shortcut *commentShortcut = new CSMPrefs::Shortcut("script-editor-comment", this);
+    commentShortcut->associateAction(mCommentAction);
+
+    mUncommentAction = new QAction (tr ("Uncomment Selection"), this);
+    connect(mUncommentAction, SIGNAL (triggered()), this, SLOT (uncommentSelection()));
+    CSMPrefs::Shortcut *uncommentShortcut = new CSMPrefs::Shortcut("script-editor-uncomment", this);
+    uncommentShortcut->associateAction(mUncommentAction);
 
     mHighlighter = new ScriptHighlighter (document.getData(), mode, ScriptEdit::document());
 
@@ -118,14 +134,6 @@ void CSVWorld::ScriptEdit::showLineNum(bool show)
         mShowLineNum = show;
         updateLineNumberAreaWidth(0);
     }
-}
-
-void CSVWorld::ScriptEdit::setMonoFont(bool show)
-{
-    if(show)
-        setFont(mMonoFont);
-    else
-        setFont(mDefaultFont);
 }
 
 bool CSVWorld::ScriptEdit::isChangeLocked() const
@@ -194,6 +202,12 @@ bool CSVWorld::ScriptEdit::stringNeedsQuote (const std::string& id) const
     return !(string.contains(mWhiteListQoutes));
 }
 
+void CSVWorld::ScriptEdit::setTabWidth()
+{
+    // Set tab width to specified number of characters using current font.
+    setTabStopDistance(mTabCharCount * fontMetrics().horizontalAdvance(' '));
+}
+
 void CSVWorld::ScriptEdit::wrapLines(bool wrap)
 {
     if (wrap)
@@ -216,6 +230,7 @@ void CSVWorld::ScriptEdit::settingChanged(const CSMPrefs::Setting *setting)
     else if (*setting == "Scripts/mono-font")
     {
         setFont(setting->isTrue() ? mMonoFont : mDefaultFont);
+        setTabWidth();
     }
     else if (*setting == "Scripts/show-linenum")
     {
@@ -224,6 +239,18 @@ void CSVWorld::ScriptEdit::settingChanged(const CSMPrefs::Setting *setting)
     else if (*setting == "Scripts/wrap-lines")
     {
         wrapLines(setting->isTrue());
+    }
+    else if (*setting == "Scripts/tab-width")
+    {
+        mTabCharCount = setting->toInt();
+        setTabWidth();
+    }
+    else if (*setting == "Scripts/highlight-occurrences")
+    {
+        mMarkOccurrences = setting->isTrue();
+        mHighlighter->setMarkedWord("");
+        updateHighlighting();
+        mHighlighter->setMarkOccurrences(mMarkOccurrences);
     }
 }
 
@@ -258,8 +285,7 @@ int CSVWorld::ScriptEdit::lineNumberAreaWidth()
         ++digits;
     }
 
-    int space = 3 + fontMetrics().width(QLatin1Char('9')) * digits;
-
+    int space = 3 + fontMetrics().horizontalAdvance(QLatin1Char('9')) * digits;
     return space;
 }
 
@@ -279,12 +305,110 @@ void CSVWorld::ScriptEdit::updateLineNumberArea(const QRect &rect, int dy)
         updateLineNumberAreaWidth(0);
 }
 
+void CSVWorld::ScriptEdit::markOccurrences()
+{
+    if (mMarkOccurrences)
+    {
+        QTextCursor cursor = textCursor();
+
+        // prevent infinite recursion with cursor.select(),
+        // which ends up calling this function again
+        // could be fixed with blockSignals, but mDocument is const
+        disconnect(this, SIGNAL(cursorPositionChanged()), this, 0);
+        cursor.select(QTextCursor::WordUnderCursor);
+        connect(this, SIGNAL(cursorPositionChanged()), this, SLOT(markOccurrences()));
+
+        QString word = cursor.selectedText();
+        mHighlighter->setMarkedWord(word.toStdString());
+        mHighlighter->rehighlight();
+    }
+}
+  
+void CSVWorld::ScriptEdit::commentSelection()
+{
+    QTextCursor begin = textCursor();
+    QTextCursor end = begin;
+    begin.setPosition(begin.selectionStart());
+    begin.movePosition(QTextCursor::StartOfLine);
+
+    end.setPosition(end.selectionEnd());
+    end.movePosition(QTextCursor::EndOfLine);
+
+    begin.beginEditBlock();
+
+    for (; begin < end; begin.movePosition(QTextCursor::EndOfLine), begin.movePosition(QTextCursor::Right))
+    {
+        begin.insertText(";");
+    }
+
+    begin.endEditBlock();
+}
+
+void CSVWorld::ScriptEdit::uncommentSelection()
+{
+    QTextCursor begin = textCursor();
+    QTextCursor end = begin;
+    begin.setPosition(begin.selectionStart());
+    begin.movePosition(QTextCursor::StartOfLine);
+
+    end.setPosition(end.selectionEnd());
+    end.movePosition(QTextCursor::EndOfLine);
+
+    begin.beginEditBlock();
+
+    for (; begin < end; begin.movePosition(QTextCursor::EndOfLine), begin.movePosition(QTextCursor::Right)) {
+        begin.select(QTextCursor::LineUnderCursor);
+        QString line = begin.selectedText();
+
+        if (line.size() == 0)
+            continue;
+
+        // get first nonspace character in line
+        int index;
+        for (index = 0; index != line.size(); ++index)
+        {
+            if (!line[index].isSpace())
+                break;
+        }
+
+        if (index != line.size() && line[index] == ';')
+        {
+            // remove the semicolon
+            line.remove(index, 1);
+            // put the line back
+            begin.insertText(line);
+        }
+    }
+
+    begin.endEditBlock();
+}
+
 void CSVWorld::ScriptEdit::resizeEvent(QResizeEvent *e)
 {
     QPlainTextEdit::resizeEvent(e);
 
     QRect cr = contentsRect();
     mLineNumberArea->setGeometry(QRect(cr.left(), cr.top(), lineNumberAreaWidth(), cr.height()));
+}
+
+void CSVWorld::ScriptEdit::contextMenuEvent(QContextMenuEvent *event)
+{
+    QMenu *menu = createStandardContextMenu();
+
+    // remove redo/undo since they are disabled
+    QList<QAction*> menuActions = menu->actions();
+    for (QList<QAction*>::iterator i = menuActions.begin(); i < menuActions.end(); ++i)
+    {
+        if ((*i)->text().contains("Undo") || (*i)->text().contains("Redo"))
+        {
+            (*i)->setVisible(false);
+        }
+    }
+    menu->addAction(mCommentAction);
+    menu->addAction(mUncommentAction);
+
+    menu->exec(event->globalPos());
+    delete menu;
 }
 
 void CSVWorld::ScriptEdit::lineNumberAreaPaintEvent(QPaintEvent *event)

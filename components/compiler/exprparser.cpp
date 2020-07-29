@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <stack>
 #include <iterator>
+#include <sstream>
 
 #include <components/misc/stringops.hpp>
 
@@ -99,7 +100,7 @@ namespace Compiler
         else if (t1=='f' || t2=='f')
             mOperands.push_back ('f');
         else
-            throw std::logic_error ("failed to determine result operand type");
+            throw std::logic_error ("Failed to determine result operand type");
     }
 
     void ExprParser::pop()
@@ -158,7 +159,7 @@ namespace Compiler
 
             default:
 
-                throw std::logic_error ("unknown operator");
+                throw std::logic_error ("Unknown operator");
         }
     }
 
@@ -277,10 +278,18 @@ namespace Compiler
     {
         if (!mExplicit.empty())
         {
-            if (mMemberOp && handleMemberAccess (name))
-                return true;
+            if (!mRefOp)
+            {
+                if (mMemberOp && handleMemberAccess (name))
+                    return true;
 
-            return Parser::parseName (name, loc, scanner);
+                return Parser::parseName (name, loc, scanner);
+            }
+            else
+            {
+                mExplicit.clear();
+                getErrorHandler().warning ("Stray explicit reference", loc);
+            }
         }
 
         mFirst = false;
@@ -311,27 +320,26 @@ namespace Compiler
                 return true;
             }
 
-            // die in a fire, Morrowind script compiler!
-            if (const Extensions *extensions = getContext().getExtensions())
-            {
-                if (getContext().isJournalId (name2))
-                {
-                    // JournalID used as an argument. Use the index of that JournalID
-                    Generator::pushString (mCode, mLiterals, name2);
-                    int keyword = extensions->searchKeyword ("getjournalindex");
-                    extensions->generateFunctionCode (keyword, mCode, mLiterals, mExplicit, 0);
-                    mNextOperand = false;
-                    mOperands.push_back ('l');
-
-                    return true;
-                }
-            }
-
             if (mExplicit.empty() && getContext().isId (name2))
             {
                 mExplicit = name2;
                 return true;
             }
+
+            // This is terrible, but of course we must have this for legacy content.
+            // Convert the string to a number even if it's impossible and use it as a number literal.
+            // Can't use stof/atof or to_string out of locale concerns.
+            float number;
+            std::stringstream stream(name2);
+            stream >> number;
+            stream.str(std::string());
+            stream.clear();
+            stream << number;
+
+            pushFloatLiteral(number);
+            mTokenLoc = loc;
+            getErrorHandler().warning ("Parsing a non-variable string as a number: " + stream.str(), loc);
+            return true;
         }
         else
         {
@@ -339,8 +347,6 @@ namespace Compiler
             scanner.putbackName (name, loc);
             return false;
         }
-
-        return Parser::parseName (name, loc, scanner);
     }
 
     bool ExprParser::parseKeyword (int keyword, const TokenLoc& loc, Scanner& scanner)
@@ -366,9 +372,7 @@ namespace Compiler
             keyword==Scanner::K_elseif || keyword==Scanner::K_while ||
             keyword==Scanner::K_endwhile || keyword==Scanner::K_return ||
             keyword==Scanner::K_messagebox || keyword==Scanner::K_set ||
-            keyword==Scanner::K_to || keyword==Scanner::K_startscript ||
-            keyword==Scanner::K_stopscript || keyword==Scanner::K_enable ||
-            keyword==Scanner::K_disable)
+            keyword==Scanner::K_to)
         {
             return parseName (loc.mLiteral, loc, scanner);
         }
@@ -379,53 +383,6 @@ namespace Compiler
         {
             if (mRefOp && mNextOperand)
             {
-                if (keyword==Scanner::K_getdisabled)
-                {
-                    start();
-
-                    mTokenLoc = loc;
-
-                    Generator::getDisabled (mCode, mLiterals, mExplicit);
-                    mOperands.push_back ('l');
-                    mExplicit.clear();
-                    mRefOp = false;
-
-                    std::vector<Interpreter::Type_Code> ignore;
-                    parseArguments ("x", scanner, ignore);
-
-                    mNextOperand = false;
-                    return true;
-                }
-                else if (keyword==Scanner::K_getdistance)
-                {
-                    start();
-
-                    mTokenLoc = loc;
-                    parseArguments ("c", scanner);
-
-                    Generator::getDistance (mCode, mLiterals, mExplicit);
-                    mOperands.push_back ('f');
-                    mExplicit.clear();
-                    mRefOp = false;
-
-                    mNextOperand = false;
-                    return true;
-                }
-                else if (keyword==Scanner::K_scriptrunning)
-                {
-                    start();
-
-                    mTokenLoc = loc;
-                    parseArguments ("c", scanner);
-
-                    Generator::scriptRunning (mCode);
-                    mOperands.push_back ('l');
-
-                    mExplicit.clear();
-                    mRefOp = false;
-                    mNextOperand = false;
-                    return true;
-                }
 
                 // check for custom extensions
                 if (const Extensions *extensions = getContext().getExtensions())
@@ -438,7 +395,7 @@ namespace Compiler
                     {
                         if (!hasExplicit)
                         {
-                            getErrorHandler().warning ("stray explicit reference (ignoring it)", loc);
+                            getErrorHandler().warning ("Stray explicit reference", loc);
                             mExplicit.clear();
                         }
 
@@ -473,84 +430,6 @@ namespace Compiler
 
                 Generator::squareRoot (mCode);
                 mOperands.push_back ('f');
-
-                mNextOperand = false;
-                return true;
-            }
-            else if (keyword==Scanner::K_menumode)
-            {
-                start();
-
-                mTokenLoc = loc;
-
-                Generator::menuMode (mCode);
-                mOperands.push_back ('l');
-
-                mNextOperand = false;
-                return true;
-            }
-            else if (keyword==Scanner::K_random)
-            {
-                start();
-
-                mTokenLoc = loc;
-                parseArguments ("l", scanner);
-
-                Generator::random (mCode);
-                mOperands.push_back ('l');
-
-                mNextOperand = false;
-                return true;
-            }
-            else if (keyword==Scanner::K_scriptrunning)
-            {
-                start();
-
-                mTokenLoc = loc;
-                parseArguments ("c", scanner);
-
-                Generator::scriptRunning (mCode);
-                mOperands.push_back ('l');
-
-                mNextOperand = false;
-                return true;
-            }
-            else if (keyword==Scanner::K_getdistance)
-            {
-                start();
-
-                mTokenLoc = loc;
-                parseArguments ("c", scanner);
-
-                Generator::getDistance (mCode, mLiterals, "");
-                mOperands.push_back ('f');
-
-                mNextOperand = false;
-                return true;
-            }
-            else if (keyword==Scanner::K_getsecondspassed)
-            {
-                start();
-
-                mTokenLoc = loc;
-
-                Generator::getSecondsPassed (mCode);
-                mOperands.push_back ('f');
-
-                mNextOperand = false;
-                return true;
-            }
-            else if (keyword==Scanner::K_getdisabled)
-            {
-                start();
-
-                mTokenLoc = loc;
-
-                Generator::getDisabled (mCode, mLiterals, "");
-                mOperands.push_back ('l');
-
-                std::vector<Interpreter::Type_Code> ignore;
-                parseArguments ("x", scanner, ignore);
 
                 mNextOperand = false;
                 return true;
@@ -743,13 +622,13 @@ namespace Compiler
     {
         if (mOperands.empty() && mOperators.empty())
         {
-            getErrorHandler().error ("missing expression", mTokenLoc);
+            getErrorHandler().error ("Missing expression", mTokenLoc);
             return 'l';
         }
 
         if (mNextOperand || mOperands.empty())
         {
-            getErrorHandler().error ("syntax error in expression", mTokenLoc);
+            getErrorHandler().error ("Syntax error in expression", mTokenLoc);
             return 'l';
         }
 
@@ -807,7 +686,7 @@ namespace Compiler
                         ++optionalCount;
                 }
                 else
-                    getErrorHandler().warning ("Ignoring extra argument",
+                    getErrorHandler().warning ("Extra argument",
                         stringParser.getTokenLoc());
             }
             else if (*iter=='X')
@@ -821,7 +700,7 @@ namespace Compiler
                 if (parser.isEmpty())
                     break;
                 else
-                    getErrorHandler().warning("Ignoring extra argument", parser.getTokenLoc());
+                    getErrorHandler().warning("Extra argument", parser.getTokenLoc());
             }
             else if (*iter=='z')
             {
@@ -833,7 +712,7 @@ namespace Compiler
                 if (discardParser.isEmpty())
                     break;
                 else
-                    getErrorHandler().warning("Ignoring extra argument", discardParser.getTokenLoc());
+                    getErrorHandler().warning("Extra argument", discardParser.getTokenLoc());
             }
             else if (*iter=='j')
             {

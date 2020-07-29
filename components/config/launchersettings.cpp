@@ -3,7 +3,7 @@
 #include <QTextStream>
 #include <QString>
 #include <QRegExp>
-#include <QMap>
+#include <QMultiMap>
 
 #include <QDebug>
 
@@ -22,14 +22,15 @@ Config::LauncherSettings::~LauncherSettings()
 
 QStringList Config::LauncherSettings::subKeys(const QString &key)
 {
-    QMap<QString, QString> settings = SettingsBase::getSettings();
+    QMultiMap<QString, QString> settings = SettingsBase::getSettings();
     QStringList keys = settings.uniqueKeys();
 
     QRegExp keyRe("(.+)/");
 
     QStringList result;
 
-    foreach (const QString &currentKey, keys) {
+    for (const QString &currentKey : keys)
+    {
 
         if (keyRe.indexIn(currentKey) != -1)
         {
@@ -53,7 +54,7 @@ bool Config::LauncherSettings::writeFile(QTextStream &stream)
 {
     QString sectionPrefix;
     QRegExp sectionRe("([^/]+)/(.+)$");
-    QMap<QString, QString> settings = SettingsBase::getSettings();
+    QMultiMap<QString, QString> settings = SettingsBase::getSettings();
 
     QMapIterator<QString, QString> i(settings);
     i.toBack();
@@ -110,7 +111,7 @@ void Config::LauncherSettings::setContentList(const GameSettings& gameSettings)
     }
 
     // if any existing profile in launcher matches the content list, make that profile the default
-    foreach(const QString &listName, getContentLists())
+    for (const QString &listName : getContentLists())
     {
         if (isEqual(files, getContentListFiles(listName)))
         {
@@ -140,7 +141,7 @@ void Config::LauncherSettings::setContentList(const QString& contentListName, co
 {
     removeContentList(contentListName);
     QString key = makeContentListKey(contentListName);
-    foreach(const QString& fileName, fileNames)
+    for (const QString& fileName : fileNames)
     {
         setMultiValue(key, fileName);
     }

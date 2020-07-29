@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 #include <fstream>
+#include <cmath>
 
 #include <boost/program_options.hpp>
 
@@ -86,7 +87,7 @@ bool parseOptions (int argc, char** argv, Arguments &info)
         ("plain,p", "Print contents of dialogs, books and scripts. "
          "(skipped by default)"
          "Only affects dump mode.")
-        ("quiet,q", "Supress all record information. Useful for speed tests.")
+        ("quiet,q", "Suppress all record information. Useful for speed tests.")
         ("loadcells,C", "Browse through contents of all cells.")
 
         ( "encoding,e", bpo::value<std::string>(&(info.encoding))->
@@ -122,14 +123,9 @@ bool parseOptions (int argc, char** argv, Arguments &info)
 
         bpo::store(valid_opts, variables);
     }
-    catch(boost::program_options::unknown_option & x)
+    catch(std::exception &e)
     {
-        std::cerr << "ERROR: " << x.what() << std::endl;
-        return false;
-    }
-    catch(boost::program_options::invalid_command_line_syntax & x)
-    {
-        std::cerr << "ERROR: " << x.what() << std::endl;
+        std::cout << "ERROR parsing arguments: " << e.what() << std::endl;
         return false;
     }
 
@@ -262,18 +258,37 @@ void loadCell(ESM::Cell &cell, ESM::ESMReader &esm, Arguments& info)
         if(quiet) continue;
 
         std::cout << "    Refnum: " << ref.mRefNum.mIndex << std::endl;
-        std::cout << "    ID: '" << ref.mRefID << "'\n";
-        std::cout << "    Owner: '" << ref.mOwner << "'\n";
-        std::cout << "    Global: '" << ref.mGlobalVariable << "'" << std::endl;
-        std::cout << "    Faction: '" << ref.mFaction << "'" << std::endl;
-        std::cout << "    Faction rank: '" << ref.mFactionRank << "'" << std::endl;
-        std::cout << "    Enchantment charge: '" << ref.mEnchantmentCharge << "'\n";
-        std::cout << "    Uses/health: '" << ref.mChargeInt << "'\n";
-        std::cout << "    Gold value: '" << ref.mGoldValue << "'\n";
-        std::cout << "    Blocked: '" << static_cast<int>(ref.mReferenceBlocked) << "'" << std::endl;
+        std::cout << "    ID: " << ref.mRefID << std::endl;
+        std::cout << "    Position: (" << ref.mPos.pos[0] << ", " << ref.mPos.pos[1] << ", " << ref.mPos.pos[2] << ")" << std::endl;
+        if (ref.mScale != 1.f)
+            std::cout << "    Scale: " << ref.mScale << std::endl;
+        if (!ref.mOwner.empty())
+            std::cout << "    Owner: " << ref.mOwner << std::endl;
+        if (!ref.mGlobalVariable.empty())
+            std::cout << "    Global: " << ref.mGlobalVariable << std::endl;
+        if (!ref.mFaction.empty())
+            std::cout << "    Faction: " << ref.mFaction << std::endl;
+        if (!ref.mFaction.empty() || ref.mFactionRank != -2)
+            std::cout << "    Faction rank: " << ref.mFactionRank << std::endl;
+        std::cout << "    Enchantment charge: " << ref.mEnchantmentCharge << std::endl;
+        std::cout << "    Uses/health: " << ref.mChargeInt << std::endl;
+        std::cout << "    Gold value: " << ref.mGoldValue << std::endl;
+        std::cout << "    Blocked: " << static_cast<int>(ref.mReferenceBlocked) << std::endl;
         std::cout << "    Deleted: " << deleted << std::endl;
         if (!ref.mKey.empty())
-            std::cout << "    Key: '" << ref.mKey << "'" << std::endl;
+            std::cout << "    Key: " << ref.mKey << std::endl;
+        std::cout << "    Lock level: " << ref.mLockLevel << std::endl;
+        if (!ref.mTrap.empty())
+            std::cout << "    Trap: " << ref.mTrap << std::endl;
+        if (!ref.mSoul.empty())
+            std::cout << "    Soul: " << ref.mSoul << std::endl;
+        if (ref.mTeleport)
+        {
+            std::cout << "    Destination position: (" << ref.mDoorDest.pos[0] << ", "
+                      << ref.mDoorDest.pos[1] << ", " << ref.mDoorDest.pos[2] << ")" << std::endl;
+            if (!ref.mDestCell.empty())
+                std::cout << "    Destination cell: " << ref.mDestCell << std::endl;
+        }
     }
 }
 
@@ -337,12 +352,12 @@ int load(Arguments& info)
             std::cout << "Author: " << esm.getAuthor() << std::endl
                  << "Description: " << esm.getDesc() << std::endl
                  << "File format version: " << esm.getFVer() << std::endl;
-            std::vector<ESM::Header::MasterData> m = esm.getGameFiles();
-            if (!m.empty())
+            std::vector<ESM::Header::MasterData> masterData = esm.getGameFiles();
+            if (!masterData.empty())
             {
                 std::cout << "Masters:" << std::endl;
-                for(unsigned int i=0;i<m.size();i++)
-                    std::cout << "  " << m[i].name << ", " << m[i].size << " bytes" << std::endl;
+                for(const auto& master : masterData)
+                    std::cout << "  " << master.name << ", " << master.size << " bytes" << std::endl;
             }
         }
 
@@ -354,12 +369,12 @@ int load(Arguments& info)
             esm.getRecHeader(flags);
 
             EsmTool::RecordBase *record = EsmTool::RecordBase::create(n);
-            if (record == 0) 
+            if (record == nullptr)
             {
-                if (std::find(skipped.begin(), skipped.end(), n.val) == skipped.end())
+                if (std::find(skipped.begin(), skipped.end(), n.intval) == skipped.end())
                 {
                     std::cout << "Skipping " << n.toString() << " records." << std::endl;
-                    skipped.push_back(n.val);
+                    skipped.push_back(n.intval);
                 }
 
                 esm.skipRecord();
@@ -391,32 +406,29 @@ int load(Arguments& info)
                 record->print();
             }
 
-            if (record->getType().val == ESM::REC_CELL && loadCells && interested) 
+            if (record->getType().intval == ESM::REC_CELL && loadCells && interested)
             {
                 loadCell(record->cast<ESM::Cell>()->get(), esm, info);
             }
 
-            if (save) 
+            if (save)
             {
                 info.data.mRecords.push_back(record);
-            } 
-            else 
+            }
+            else
             {
                 delete record;
             }
-            ++info.data.mRecordStats[n.val];
+            ++info.data.mRecordStats[n.intval];
         }
 
     } catch(std::exception &e) {
         std::cout << "\nERROR:\n\n  " << e.what() << std::endl;
 
-        typedef std::deque<EsmTool::RecordBase *> RecStore;
-        RecStore &store = info.data.mRecords;
-        for (RecStore::iterator it = store.begin(); it != store.end(); ++it)
-        {
-            delete *it;
-        }
-        store.clear();
+        for (const EsmTool::RecordBase* record : info.data.mRecords)
+            delete record;
+
+        info.data.mRecords.clear();
         return 1;
     }
 
@@ -442,26 +454,18 @@ int clone(Arguments& info)
     size_t recordCount = info.data.mRecords.size();
 
     int digitCount = 1; // For a nicer output
-    if (recordCount > 9) ++digitCount;
-    if (recordCount > 99) ++digitCount;
-    if (recordCount > 999) ++digitCount;
-    if (recordCount > 9999) ++digitCount;
-    if (recordCount > 99999) ++digitCount;
-    if (recordCount > 999999) ++digitCount;
+    if (recordCount > 0)
+        digitCount = (int)std::log10(recordCount) + 1;
 
     std::cout << "Loaded " << recordCount << " records:" << std::endl << std::endl;
 
-    ESM::NAME name;
-
     int i = 0;
-    typedef std::map<int, int> Stats;
-    Stats &stats = info.data.mRecordStats;
-    for (Stats::iterator it = stats.begin(); it != stats.end(); ++it)
+    for (std::pair<int, int> stat : info.data.mRecordStats)
     {
-        name.val = it->first;
-        int amount = it->second;
+        ESM::NAME name;
+        name.intval = stat.first;
+        int amount = stat.second;
         std::cout << std::setw(digitCount) << amount << " " << name.toString() << "  ";
-
         if (++i % 3 == 0)
             std::cout << std::endl;
     }
@@ -479,39 +483,36 @@ int clone(Arguments& info)
     esm.setVersion(info.data.version);
     esm.setRecordCount (recordCount);
 
-    for (std::vector<ESM::Header::MasterData>::iterator it = info.data.masters.begin(); it != info.data.masters.end(); ++it)
-        esm.addMaster(it->name, it->size);
+    for (const ESM::Header::MasterData &master : info.data.masters)
+        esm.addMaster(master.name, master.size);
 
     std::fstream save(info.outname.c_str(), std::fstream::out | std::fstream::binary);
     esm.save(save);
 
     int saved = 0;
-    typedef std::deque<EsmTool::RecordBase *> Records;
-    Records &records = info.data.mRecords;
-    for (Records::iterator it = records.begin(); it != records.end() && i > 0; ++it)
+    for (EsmTool::RecordBase* record : info.data.mRecords)
     {
-        EsmTool::RecordBase *record = *it;
-        name.val = record->getType().val;
+        if (i <= 0)
+            break;
 
-        esm.startRecord(name.toString(), record->getFlags());
+        const ESM::NAME& typeName = record->getType();
+
+        esm.startRecord(typeName.toString(), record->getFlags());
 
         record->save(esm);
-        if (name.val == ESM::REC_CELL) {
+        if (typeName.intval == ESM::REC_CELL) {
             ESM::Cell *ptr = &record->cast<ESM::Cell>()->get();
-            if (!info.data.mCellRefs[ptr].empty()) {
-                typedef std::deque<std::pair<ESM::CellRef, bool> > RefList;
-                RefList &refs = info.data.mCellRefs[ptr];
-                for (RefList::iterator refIt = refs.begin(); refIt != refs.end(); ++refIt)
-                {
-                    refIt->first.save(esm, refIt->second);
-                }
+            if (!info.data.mCellRefs[ptr].empty()) 
+            {
+                for (std::pair<ESM::CellRef, bool> &ref : info.data.mCellRefs[ptr])
+                    ref.first.save(esm, ref.second);
             }
         }
 
-        esm.endRecord(name.toString());
+        esm.endRecord(typeName.toString());
 
         saved++;
-        int perc = (int)((saved / (float)recordCount)*100);
+        int perc = recordCount == 0 ? 100 : (int)((saved / (float)recordCount)*100);
         if (perc % 10 == 0)
         {
             std::cerr << "\r" << perc << "%";
@@ -537,8 +538,8 @@ int comp(Arguments& info)
     Arguments fileOne;
     Arguments fileTwo;
 
-    fileOne.raw_given = 0;
-    fileTwo.raw_given = 0;
+    fileOne.raw_given = false;
+    fileTwo.raw_given = false;
 
     fileOne.mode = "clone";
     fileTwo.mode = "clone";
@@ -566,9 +567,6 @@ int comp(Arguments& info)
         std::cout << "Not equal, different amount of records." << std::endl;
         return 1;
     }
-
-
-
 
     return 0;
 }

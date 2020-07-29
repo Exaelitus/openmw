@@ -92,6 +92,8 @@ namespace MWWorld
           : mIter(iter)
         {}
 
+        SharedIterator& operator=(const SharedIterator&) = default;
+
         SharedIterator &operator++() {
             ++mIter;
             return *this;
@@ -102,6 +104,11 @@ namespace MWWorld
             ++mIter;
 
             return iter;
+        }
+
+        SharedIterator &operator+=(int advance) {
+            mIter += advance;
+            return *this;
         }
 
         SharedIterator &operator--() {
@@ -160,13 +167,14 @@ namespace MWWorld
         void setUp();
 
         const T *search(const std::string &id) const;
+        const T *searchStatic(const std::string &id) const;
 
         /**
          * Does the record with this ID come from the dynamic store?
          */
         bool isDynamic(const std::string &id) const;
 
-        /** Returns a random record that starts with the named ID, or NULL if not found. */
+        /** Returns a random record that starts with the named ID, or nullptr if not found. */
         const T *searchRandom(const std::string &id) const;
 
         const T *find(const std::string &id) const;
@@ -242,11 +250,13 @@ namespace MWWorld
 
         // Must be threadsafe! Called from terrain background loading threads.
         // Not a big deal here, since ESM::Land can never be modified or inserted/erased
-        ESM::Land *search(int x, int y) const;
-        ESM::Land *find(int x, int y) const;
+        const ESM::Land *search(int x, int y) const;
+        const ESM::Land *find(int x, int y) const;
 
         RecordId load(ESM::ESMReader &esm);
         void setUp();
+    private:
+        bool mBuilt = false;
     };
 
     template <>
@@ -288,11 +298,13 @@ namespace MWWorld
 
         const ESM::Cell *search(const std::string &id) const;
         const ESM::Cell *search(int x, int y) const;
+        const ESM::Cell *searchStatic(int x, int y) const;
         const ESM::Cell *searchOrCreate(int x, int y);
 
         const ESM::Cell *find(const std::string &id) const;
         const ESM::Cell *find(int x, int y) const;
 
+        virtual void clearDynamic();
         void setUp();
 
         RecordId load(ESM::ESMReader &esm);
@@ -309,6 +321,8 @@ namespace MWWorld
         const ESM::Cell *searchExtByRegion(const std::string &id) const;
 
         size_t getSize() const;
+        size_t getExtSize() const;
+        size_t getIntSize() const;
 
         void listIdentifier(std::vector<std::string> &list) const;
 
@@ -377,6 +391,30 @@ namespace MWWorld
 
         const ESM::Attribute *search(size_t index) const;
         const ESM::Attribute *find(size_t index) const;
+
+        void setUp();
+
+        size_t getSize() const;
+        iterator begin() const;
+        iterator end() const;
+    };
+
+    template <>
+    class Store<ESM::WeaponType> : public StoreBase
+    {
+        std::map<int, ESM::WeaponType> mStatic;
+
+    public:
+        typedef std::map<int, ESM::WeaponType>::const_iterator iterator;
+
+        Store();
+
+        const ESM::WeaponType *search(const int id) const;
+        const ESM::WeaponType *find(const int id) const;
+
+        RecordId load(ESM::ESMReader &esm) { return RecordId(0, false); }
+
+        ESM::WeaponType* insert(const ESM::WeaponType &weaponType);
 
         void setUp();
 

@@ -24,7 +24,7 @@ class Node : public Named
 {
 public:
     // Node flags. Interpretation depends somewhat on the type of node.
-    int flags;
+    unsigned int flags;
     Transformation trafo;
     osg::Vec3f velocity; // Unused? Might be a run-time game state
     PropertyList props;
@@ -44,7 +44,7 @@ public:
         velocity = nif->getVector3();
         props.read(nif);
 
-        hasBounds = !!nif->getInt();
+        hasBounds = nif->getBoolean();
         if(hasBounds)
         {
             nif->getInt(); // always 1
@@ -53,10 +53,9 @@ public:
             boundXYZ = nif->getVector3();
         }
 
-        parent = NULL;
+        parent = nullptr;
 
-        boneTrafo = NULL;
-        boneIndex = -1;
+        isBone = false;
     }
 
     void post(NIFFile *nif)
@@ -65,31 +64,15 @@ public:
         props.post(nif);
     }
 
-    // Parent node, or NULL for the root node. As far as I'm aware, only
+    // Parent node, or nullptr for the root node. As far as I'm aware, only
     // NiNodes (or types derived from NiNodes) can be parents.
     NiNode *parent;
 
-    // Bone transformation. If set, node is a part of a skeleton.
-    const Transformation *boneTrafo;
+    bool isBone;
 
-    // Bone weight info, from NiSkinData
-    const NiSkinData::BoneInfo *boneInfo;
-
-    // Bone index. If -1, this node is either not a bone, or if
-    // boneTrafo is set it is the root bone in the skeleton.
-    short boneIndex;
-
-    void makeRootBone(const Transformation *tr)
+    void setBone()
     {
-        boneTrafo = tr;
-        boneIndex = -1;
-    }
-
-    void makeBone(short ind, const NiSkinData::BoneInfo &bi)
-    {
-        boneInfo = &bi;
-        boneTrafo = &bi.trafo;
-        boneIndex = ind;
+        isBone = true;
     }
 };
 
@@ -101,7 +84,8 @@ struct NiNode : Node
     enum Flags {
         Flag_Hidden = 0x0001,
         Flag_MeshCollision = 0x0002,
-        Flag_BBoxCollision = 0x0004
+        Flag_BBoxCollision = 0x0004,
+        Flag_ActiveCollision = 0x0020
     };
     enum BSAnimFlags {
         AnimFlag_AutoPlay = 0x0020
@@ -144,7 +128,12 @@ struct NiNode : Node
     }
 };
 
-struct NiTriShape : Node
+struct NiGeometry : Node
+{
+    NiSkinInstancePtr skin;
+};
+
+struct NiTriShape : NiGeometry
 {
     /* Possible flags:
         0x40 - mesh has no vertex normals ?
@@ -154,7 +143,48 @@ struct NiTriShape : Node
     */
 
     NiTriShapeDataPtr data;
-    NiSkinInstancePtr skin;
+
+    void read(NIFStream *nif)
+    {
+        Node::read(nif);
+        data.read(nif);
+        skin.read(nif);
+    }
+
+    void post(NIFFile *nif)
+    {
+        Node::post(nif);
+        data.post(nif);
+        skin.post(nif);
+        if (!skin.empty())
+            nif->setUseSkinning(true);
+    }
+};
+
+struct NiTriStrips : NiGeometry
+{
+    NiTriStripsDataPtr data;
+
+    void read(NIFStream *nif)
+    {
+        Node::read(nif);
+        data.read(nif);
+        skin.read(nif);
+    }
+
+    void post(NIFFile *nif)
+    {
+        Node::post(nif);
+        data.post(nif);
+        skin.post(nif);
+        if (!skin.empty())
+            nif->setUseSkinning(true);
+    }
+};
+
+struct NiLines : NiGeometry
+{
+    NiLinesDataPtr data;
 
     void read(NIFStream *nif)
     {
@@ -255,10 +285,12 @@ struct NiRotatingParticles : Node
 // A node used as the base to switch between child nodes, such as for LOD levels.
 struct NiSwitchNode : public NiNode
 {
+    unsigned int initialIndex;
+
     void read(NIFStream *nif)
     {
         NiNode::read(nif);
-        nif->getInt(); // unknown
+        initialIndex = nif->getUInt();
     }
 };
 
@@ -276,7 +308,8 @@ struct NiLODNode : public NiSwitchNode
     void read(NIFStream *nif)
     {
         NiSwitchNode::read(nif);
-        lodCenter = nif->getVector3();
+        if (nif->getVersion() >= NIFFile::NIFVersion::VER_MW && nif->getVersion() <= NIFStream::generateVersion(10,0,1,0))
+            lodCenter = nif->getVector3();
         unsigned int numLodLevels = nif->getUInt();
         for (unsigned int i=0; i<numLodLevels; ++i)
         {

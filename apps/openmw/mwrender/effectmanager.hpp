@@ -1,12 +1,11 @@
 #ifndef OPENMW_MWRENDER_EFFECTMANAGER_H
 #define OPENMW_MWRENDER_EFFECTMANAGER_H
 
-#include <string>
 #include <map>
+#include <memory>
+#include <string>
 
 #include <osg/ref_ptr>
-
-#include <boost/shared_ptr.hpp>
 
 namespace osg
 {
@@ -33,7 +32,7 @@ namespace MWRender
         ~EffectManager();
 
         /// Add an effect. When it's finished playing, it will be removed automatically.
-        void addEffect (const std::string& model, const std::string& textureOverride, const osg::Vec3f& worldPosition, float scale);
+        void addEffect (const std::string& model, const std::string& textureOverride, const osg::Vec3f& worldPosition, float scale, bool isMagicVFX = true);
 
         void update(float dt);
 
@@ -44,7 +43,7 @@ namespace MWRender
         struct Effect
         {
             float mMaxControllerLength;
-            boost::shared_ptr<EffectAnimationTime> mAnimTime;
+            std::shared_ptr<EffectAnimationTime> mAnimTime;
         };
 
         typedef std::map<osg::ref_ptr<osg::PositionAttitudeTransform>, Effect> EffectMap;

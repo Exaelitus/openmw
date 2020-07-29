@@ -1,7 +1,7 @@
 #include <iostream>
-#include <csignal>
 
 #include <QApplication>
+#include <QTranslator>
 #include <QTextCodec>
 #include <QDir>
 #include <QDebug>
@@ -12,36 +12,23 @@
 #define MAC_OS_X_VERSION_MIN_REQUIRED __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__
 #endif // MAC_OS_X_VERSION_MIN_REQUIRED
 
-#include <SDL.h>
-
 #include "maindialog.hpp"
 
 int main(int argc, char *argv[])
 {
     try
     {
-        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
-        SDL_SetMainReady();
-        if (SDL_Init(SDL_INIT_VIDEO) != 0)
-        {
-            qDebug() << "SDL_Init failed: " << QString::fromUtf8(SDL_GetError());
-            return 0;
-        }
-        signal(SIGINT, SIG_DFL); // We don't want to use the SDL event loop in the launcher,
-                                 // so reset SIGINT which SDL wants to redirect to an SDL_Quit event.
-
         QApplication app(argc, argv);
+
+        // Internationalization 
+        QString locale = QLocale::system().name().section('_', 0, 0);
+
+        QTranslator appTranslator;
+        appTranslator.load(":/translations/" + locale + ".qm");
+        app.installTranslator(&appTranslator);
 
         // Now we make sure the current dir is set to application path
         QDir dir(QCoreApplication::applicationDirPath());
-
-        #ifdef Q_OS_MAC
-        if (dir.dirName() == "MacOS") {
-            dir.cdUp();
-            dir.cdUp();
-            dir.cdUp();
-        }
-        #endif
 
         QDir::setCurrent(dir.absolutePath());
 
@@ -54,9 +41,9 @@ int main(int argc, char *argv[])
         if (result == Launcher::FirstRunDialogResultContinue)
             mainWin.show();
 
-        int returnValue = app.exec();
-        SDL_Quit();
-        return returnValue;
+        int exitCode = app.exec();
+
+        return exitCode;
     }
     catch (std::exception& e)
     {

@@ -56,6 +56,18 @@ namespace Compiler
             }
         }
 
+        if (keyword==Scanner::K_end || keyword==Scanner::K_begin ||
+            keyword==Scanner::K_short || keyword==Scanner::K_long ||
+            keyword==Scanner::K_float || keyword==Scanner::K_if ||
+            keyword==Scanner::K_endif || keyword==Scanner::K_else ||
+            keyword==Scanner::K_elseif || keyword==Scanner::K_while ||
+            keyword==Scanner::K_endwhile || keyword==Scanner::K_return ||
+            keyword==Scanner::K_messagebox || keyword==Scanner::K_set ||
+            keyword==Scanner::K_to || keyword==Scanner::K_getsquareroot)
+        {
+            return parseName (loc.mLiteral, loc, scanner);
+        }
+
         return Parser::parseKeyword (keyword, loc, scanner);
     }
 

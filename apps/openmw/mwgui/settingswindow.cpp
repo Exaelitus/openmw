@@ -3,17 +3,18 @@
 #include <MyGUI_ScrollBar.h>
 #include <MyGUI_Window.h>
 #include <MyGUI_ComboBox.h>
-#include <MyGUI_ListBox.h>
 #include <MyGUI_ScrollView.h>
 #include <MyGUI_Gui.h>
 #include <MyGUI_TabControl.h>
 
-#include <boost/algorithm/string.hpp>
-#include <boost/math/common_factor_rt.hpp>
-
 #include <SDL_video.h>
 
+#include <iomanip>
+
+#include <components/debug/debuglog.hpp>
 #include <components/misc/stringops.hpp>
+#include <components/misc/gcd.hpp>
+#include <components/misc/constants.hpp>
 #include <components/widgets/sharedstatebutton.hpp>
 #include <components/settings/settings.hpp>
 
@@ -21,6 +22,7 @@
 #include "../mwbase/world.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/inputmanager.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 
 #include "confirmationdialog.hpp"
@@ -33,17 +35,18 @@ namespace
         if (val == "linear")  return "Trilinear";
         if (val == "nearest") return "Bilinear";
         if (val != "none")
-            std::cerr<< "Invalid texture mipmap option: "<<val <<std::endl;
+            Log(Debug::Warning) << "Warning: Invalid texture mipmap option: "<< val;
+
         return "Other";
     }
 
     void parseResolution (int &x, int &y, const std::string& str)
     {
         std::vector<std::string> split;
-        boost::algorithm::split (split, str, boost::is_any_of("@(x"));
+        Misc::StringUtils::split (str, split, "@(x");
         assert (split.size() >= 2);
-        boost::trim(split[0]);
-        boost::trim(split[1]);
+        Misc::StringUtils::trim(split[0]);
+        Misc::StringUtils::trim(split[1]);
         x = MyGUI::utility::parseInt (split[0]);
         y = MyGUI::utility::parseInt (split[1]);
     }
@@ -57,7 +60,7 @@ namespace
 
     std::string getAspect (int x, int y)
     {
-        int gcd = boost::math::gcd (x, y);
+        int gcd = Misc::gcd (x, y);
         int xaspect = x / gcd;
         int yaspect = y / gcd;
         // special case: 8 : 5 is usually referred to as 16:10
@@ -124,13 +127,23 @@ namespace MWGui
             {
                 MyGUI::ScrollBar* scroll = current->castType<MyGUI::ScrollBar>();
                 std::string valueStr;
-                if (getSettingValueType(current) == "Float")
+                std::string valueType = getSettingValueType(current);
+                if (valueType == "Float" || valueType == "Integer" || valueType == "Cell")
                 {
                     // TODO: ScrollBar isn't meant for this. should probably use a dedicated FloatSlider widget
                     float min,max;
                     getSettingMinMax(scroll, min, max);
                     float value = Settings::Manager::getFloat(getSettingName(current), getSettingCategory(current));
-                    valueStr = MyGUI::utility::toString((int)value);
+
+                    if (valueType == "Cell")
+                    {
+                        std::stringstream ss;
+                        ss << std::fixed << std::setprecision(2) << value/Constants::CellSizeInUnits;
+                        valueStr = ss.str();
+                    }
+                    else
+                        valueStr = MyGUI::utility::toString(int(value));
+
                     value = std::max(min, std::min(value, max));
                     value = (value-min)/(max-min);
 
@@ -143,7 +156,8 @@ namespace MWGui
                     scroll->setScrollPosition(value);
                 }
                 scroll->eventScrollChangePosition += MyGUI::newDelegate(this, &SettingsWindow::onSliderChangePosition);
-                updateSliderLabel(scroll, valueStr);
+                if (scroll->getVisible())
+                    updateSliderLabel(scroll, valueStr);
             }
 
             configureWidgets(current);
@@ -158,7 +172,7 @@ namespace MWGui
             MyGUI::TextBox* textBox;
             getWidget(textBox, labelWidgetName);
             std::string labelCaption = scroller->getUserString("SettingLabelCaption");
-            boost::algorithm::replace_all(labelCaption, "%s", value);
+            labelCaption = Misc::StringUtils::format(labelCaption, value);
             textBox->setCaptionWithReplacing(labelCaption);
         }
     }
@@ -167,6 +181,12 @@ namespace MWGui
         WindowBase("openmw_settings_window.layout"),
         mKeyboardMode(true)
     {
+        bool terrain = Settings::Manager::getBool("distant terrain", "Terrain");
+        const std::string widgetName = terrain ? "RenderingDistanceSlider" : "LargeRenderingDistanceSlider";
+        MyGUI::Widget* unusedSlider;
+        getWidget(unusedSlider, widgetName);
+        unusedSlider->setVisible(false);
+
         configureWidgets(mMainWidget);
 
         setTitle("#{sOptions}");
@@ -183,6 +203,7 @@ namespace MWGui
         getWidget(mKeyboardSwitch, "KeyboardButton");
         getWidget(mControllerSwitch, "ControllerButton");
         getWidget(mWaterTextureSize, "WaterTextureSize");
+        getWidget(mWaterReflectionDetail, "WaterReflectionDetail");
 
 #ifndef WIN32
         // hide gamma controls since it currently does not work under Linux
@@ -206,6 +227,7 @@ namespace MWGui
         mResolutionList->eventListChangePosition += MyGUI::newDelegate(this, &SettingsWindow::onResolutionSelected);
 
         mWaterTextureSize->eventComboChangePosition += MyGUI::newDelegate(this, &SettingsWindow::onWaterTextureSizeChanged);
+        mWaterReflectionDetail->eventComboChangePosition += MyGUI::newDelegate(this, &SettingsWindow::onWaterReflectionDetailChanged);
 
         mKeyboardSwitch->eventMouseButtonClick += MyGUI::newDelegate(this, &SettingsWindow::onKeyboardSwitchClicked);
         mControllerSwitch->eventMouseButtonClick += MyGUI::newDelegate(this, &SettingsWindow::onControllerSwitchClicked);
@@ -225,11 +247,10 @@ namespace MWGui
             resolutions.push_back(std::make_pair(mode.w, mode.h));
         }
         std::sort(resolutions.begin(), resolutions.end(), sortResolutions);
-        for (std::vector < std::pair<int, int> >::const_iterator it=resolutions.begin();
-             it!=resolutions.end(); ++it)
+        for (std::pair<int, int>& resolution : resolutions)
         {
-            std::string str = MyGUI::utility::toString(it->first) + " x " + MyGUI::utility::toString(it->second)
-                    + " (" + getAspect(it->first,it->second) + ")";
+            std::string str = MyGUI::utility::toString(resolution.first) + " x " + MyGUI::utility::toString(resolution.second)
+                    + " (" + getAspect(resolution.first, resolution.second) + ")";
 
             if (mResolutionList->findItemIndexWith(str) == MyGUI::ITEM_NONE)
                 mResolutionList->addItem(str);
@@ -239,13 +260,17 @@ namespace MWGui
         std::string tmip = Settings::Manager::getString("texture mipmap", "General");
         mTextureFilteringButton->setCaption(textureMipmappingToStr(tmip));
 
-        int waterTextureSize = Settings::Manager::getInt ("rtt size", "Water");
+        int waterTextureSize = Settings::Manager::getInt("rtt size", "Water");
         if (waterTextureSize >= 512)
             mWaterTextureSize->setIndexSelected(0);
         if (waterTextureSize >= 1024)
             mWaterTextureSize->setIndexSelected(1);
         if (waterTextureSize >= 2048)
             mWaterTextureSize->setIndexSelected(2);
+
+        int waterReflectionDetail = Settings::Manager::getInt("reflection detail", "Water");
+        waterReflectionDetail = std::min(4, std::max(0, waterReflectionDetail));
+        mWaterReflectionDetail->setIndexSelected(waterReflectionDetail);
 
         mWindowBorderButton->setEnabled(!Settings::Manager::getBool("fullscreen", "Video"));
 
@@ -260,7 +285,7 @@ namespace MWGui
 
     void SettingsWindow::onOkButtonClicked(MyGUI::Widget* _sender)
     {
-        exit();
+        MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Settings);
     }
 
     void SettingsWindow::onResolutionSelected(MyGUI::ListBox* _sender, size_t index)
@@ -326,6 +351,13 @@ namespace MWGui
         apply();
     }
 
+    void SettingsWindow::onWaterReflectionDetailChanged(MyGUI::ComboBox* _sender, size_t pos)
+    {
+        unsigned int level = std::min((unsigned int)4, (unsigned int)pos);
+        Settings::Manager::setInt("reflection detail", "Water", level);
+        apply();
+    }
+
     void SettingsWindow::onButtonToggled(MyGUI::Widget* _sender)
     {
         std::string on = MWBase::Environment::get().getWindowManager()->getGameSettingString("sOn", "On");
@@ -355,24 +387,31 @@ namespace MWGui
             }
 
             bool supported = false;
+            int fallbackX = 0, fallbackY = 0;
             for (unsigned int i=0; i<mResolutionList->getItemCount(); ++i)
             {
                 std::string resStr = mResolutionList->getItemNameAt(i);
                 int resX, resY;
                 parseResolution (resX, resY, resStr);
 
+                if (i == 0)
+                {
+                    fallbackX = resX;
+                    fallbackY = resY;
+                }
+
                 if (resX == Settings::Manager::getInt("resolution x", "Video")
                     && resY  == Settings::Manager::getInt("resolution y", "Video"))
                     supported = true;
             }
 
-            if (!supported)
+            if (!supported && mResolutionList->getItemCount())
             {
-                std::string msg = "This resolution is not supported in Fullscreen mode. Please select a resolution from the list.";
-                MWBase::Environment::get().getWindowManager()->
-                    messageBox(msg);
-                _sender->castType<MyGUI::Button>()->setCaption(off);
-                return;
+                if (fallbackX != 0 && fallbackY != 0)
+                {
+                    Settings::Manager::setInt("resolution x", "Video", fallbackX);
+                    Settings::Manager::setInt("resolution y", "Video", fallbackY);
+                }
             }
 
             mWindowBorderButton->setEnabled(!newState);
@@ -393,7 +432,7 @@ namespace MWGui
         else if(pos == 1)
             Settings::Manager::setString("texture mipmap", "General", "linear");
         else
-            std::cerr<< "Unexpected option pos "<<pos <<std::endl;
+            Log(Debug::Warning) << "Unexpected option pos " << pos;
         apply();
     }
 
@@ -402,15 +441,27 @@ namespace MWGui
         if (getSettingType(scroller) == "Slider")
         {
             std::string valueStr;
-            if (getSettingValueType(scroller) == "Float")
+            std::string valueType = getSettingValueType(scroller);
+            if (valueType == "Float" || valueType == "Integer" || valueType == "Cell")
             {
                 float value = pos / float(scroller->getScrollRange()-1);
 
                 float min,max;
                 getSettingMinMax(scroller, min, max);
                 value = min + (max-min) * value;
-                Settings::Manager::setFloat(getSettingName(scroller), getSettingCategory(scroller), value);
-                valueStr = MyGUI::utility::toString(int(value));
+                if (valueType == "Float")
+                    Settings::Manager::setFloat(getSettingName(scroller), getSettingCategory(scroller), value);
+                else
+                    Settings::Manager::setInt(getSettingName(scroller), getSettingCategory(scroller), (int)value);
+
+                if (valueType == "Cell")
+                {
+                    std::stringstream ss;
+                    ss << std::fixed << std::setprecision(2) << value/Constants::CellSizeInUnits;
+                    valueStr = ss.str();
+                }
+                else
+                    valueStr = MyGUI::utility::toString(int(value));
             }
             else
             {
@@ -425,11 +476,13 @@ namespace MWGui
 
     void SettingsWindow::apply()
     {
-        const Settings::CategorySettingVector changed = Settings::Manager::apply();
+        const Settings::CategorySettingVector changed = Settings::Manager::getPendingChanges();
         MWBase::Environment::get().getWorld()->processChangedSettings(changed);
         MWBase::Environment::get().getSoundManager()->processChangedSettings(changed);
         MWBase::Environment::get().getWindowManager()->processChangedSettings(changed);
         MWBase::Environment::get().getInputManager()->processChangedSettings(changed);
+        MWBase::Environment::get().getMechanicsManager()->processChangedSettings(changed);
+        Settings::Manager::resetPendingChanges();
     }
 
     void SettingsWindow::onKeyboardSwitchClicked(MyGUI::Widget* _sender)
@@ -466,31 +519,27 @@ namespace MWGui
         else
             actions = MWBase::Environment::get().getInputManager()->getActionControllerSorting();
 
-        const int h = 18;
-        const int w = mControlsBox->getWidth() - 28;
-        int curH = 0;
-        for (std::vector<int>::const_iterator it = actions.begin(); it != actions.end(); ++it)
+        for (const int& action : actions)
         {
-            std::string desc = MWBase::Environment::get().getInputManager()->getActionDescription (*it);
+            std::string desc = MWBase::Environment::get().getInputManager()->getActionDescription (action);
             if (desc == "")
                 continue;
 
             std::string binding;
             if(mKeyboardMode)
-                binding = MWBase::Environment::get().getInputManager()->getActionKeyBindingName(*it);
+                binding = MWBase::Environment::get().getInputManager()->getActionKeyBindingName(action);
             else
-                binding = MWBase::Environment::get().getInputManager()->getActionControllerBindingName(*it);
+                binding = MWBase::Environment::get().getInputManager()->getActionControllerBindingName(action);
 
-            Gui::SharedStateButton* leftText = mControlsBox->createWidget<Gui::SharedStateButton>("SandTextButton", MyGUI::IntCoord(0,curH,w,h), MyGUI::Align::Default);
+            Gui::SharedStateButton* leftText = mControlsBox->createWidget<Gui::SharedStateButton>("SandTextButton", MyGUI::IntCoord(), MyGUI::Align::Default);
             leftText->setCaptionWithReplacing(desc);
 
-            Gui::SharedStateButton* rightText = mControlsBox->createWidget<Gui::SharedStateButton>("SandTextButton", MyGUI::IntCoord(0,curH,w,h), MyGUI::Align::Default);
+            Gui::SharedStateButton* rightText = mControlsBox->createWidget<Gui::SharedStateButton>("SandTextButton", MyGUI::IntCoord(), MyGUI::Align::Default);
             rightText->setCaptionWithReplacing(binding);
             rightText->setTextAlign (MyGUI::Align::Right);
-            rightText->setUserData(*it); // save the action id for callbacks
+            rightText->setUserData(action); // save the action id for callbacks
             rightText->eventMouseButtonClick += MyGUI::newDelegate(this, &SettingsWindow::onRebindAction);
             rightText->eventMouseWheel += MyGUI::newDelegate(this, &SettingsWindow::onInputTabMouseWheel);
-            curH += h;
 
             Gui::ButtonGroup group;
             group.push_back(leftText);
@@ -498,9 +547,25 @@ namespace MWGui
             Gui::SharedStateButton::createButtonGroup(group);
         }
 
+        layoutControlsBox();
+    }
+
+    void SettingsWindow::layoutControlsBox()
+    {
+        const int h = 18;
+        const int w = mControlsBox->getWidth() - 28;
+        const int noWidgetsInRow = 2;
+        const int totalH = mControlsBox->getChildCount() / noWidgetsInRow * h;
+
+        for (size_t i = 0; i < mControlsBox->getChildCount(); i++)
+        {
+            MyGUI::Widget * widget = mControlsBox->getChildAt(i);
+            widget->setCoord(0, i / noWidgetsInRow * h, w, h);
+        }
+
         // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the scrollbar is hidden
         mControlsBox->setVisibleVScroll(false);
-        mControlsBox->setCanvasSize (mControlsBox->getWidth(), std::max(curH, mControlsBox->getHeight()));
+        mControlsBox->setCanvasSize (mControlsBox->getWidth(), std::max(totalH, mControlsBox->getHeight()));
         mControlsBox->setVisibleVScroll(true);
     }
 
@@ -543,20 +608,17 @@ namespace MWGui
         updateControlsBox ();
     }
 
-    void SettingsWindow::open()
+    void SettingsWindow::onOpen()
     {
-        updateControlsBox ();
+        highlightCurrentResolution();
+        updateControlsBox();
         resetScrollbars();
-    }
-
-    void SettingsWindow::exit()
-    {
-        MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Settings);
+        MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mOkButton);
     }
 
     void SettingsWindow::onWindowResize(MyGUI::Window *_sender)
     {
-        updateControlsBox();
+        layoutControlsBox();
     }
 
     void SettingsWindow::resetScrollbars()

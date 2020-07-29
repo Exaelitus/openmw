@@ -21,7 +21,8 @@ QStringList Wizard::IniSettings::findKeys(const QString &text)
 {
     QStringList result;
 
-    foreach (const QString &key, mSettings.keys()) {
+    for (const QString &key : mSettings.keys())
+    {
 
         if (key.startsWith(text))
             result << key;
@@ -126,25 +127,24 @@ bool Wizard::IniSettings::writeFile(const QString &path, QTextStream &stream)
         QString key(fullKey.at(1));
 
         int index = buffer.lastIndexOf(section);
-        if (index != -1) {
-            // Look for the next section
-            index = buffer.indexOf(QLatin1Char('['), index + 1);
-
-            if (index == -1 ) {
-                // We are at the last section, append it to the bottom of the file
-                buffer.append(QString("\n%1=%2").arg(key, i.value().toString()));
-                mSettings.remove(i.key());
-                continue;
-            } else {
-                // Not at last section, add the key at the index
-                buffer.insert(index - 1, QString("\n%1=%2").arg(key, i.value().toString()));
-                mSettings.remove(i.key());
-            }
-
-        } else {
+        if (index == -1) {
             // Add the section to the end of the file, because it's not found
             buffer.append(QString("\n%1\n").arg(section));
-            i.previous();
+            index = buffer.lastIndexOf(section);
+        }
+
+        // Look for the next section
+        index = buffer.indexOf(QLatin1Char('['), index + 1);
+
+        if (index == -1 ) {
+            // We are at the last section, append it to the bottom of the file
+            buffer.append(QString("\n%1=%2").arg(key, i.value().toString()));
+            mSettings.remove(i.key());
+            continue;
+        } else {
+            // Not at last section, add the key at the index
+            buffer.insert(index - 1, QString("\n%1=%2").arg(key, i.value().toString()));
+            mSettings.remove(i.key());
         }
     }
 
@@ -198,8 +198,8 @@ bool Wizard::IniSettings::parseInx(const QString &path)
             const QString section(array.left(index));
 
             // Figure how many characters to read for the key
-            int lenght = array.indexOf("\x06", section.length() + 3) - (section.length() + 3);
-            const QString key(array.mid(section.length() + 3, lenght));
+            int length = array.indexOf("\x06", section.length() + 3) - (section.length() + 3);
+            const QString key(array.mid(section.length() + 3, length));
 
             QString value(array.mid(section.length() + key.length() + 6));
 

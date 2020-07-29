@@ -3,11 +3,14 @@
 #include <MyGUI_ListBox.h>
 #include <MyGUI_ImageBox.h>
 #include <MyGUI_Gui.h>
+#include <MyGUI_ScrollView.h>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwbase/windowmanager.hpp"
+
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/player.hpp"
 
 #include "widgets.hpp"
 
@@ -63,13 +66,20 @@ namespace MWGui
             okButton->setCaption(MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", ""));
     }
 
-    void BirthDialog::open()
+    void BirthDialog::onOpen()
     {
-        WindowModal::open();
+        WindowModal::onOpen();
         updateBirths();
         updateSpells();
-    }
+        MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mBirthList);
 
+        // Show the current birthsign by default
+        const std::string &signId =
+            MWBase::Environment::get().getWorld()->getPlayer().getBirthSign();
+
+        if (!signId.empty())
+            setBirthId(signId);
+    }
 
     void BirthDialog::setBirthId(const std::string &birthId)
     {
@@ -135,35 +145,35 @@ namespace MWGui
         // sort by name
         std::vector < std::pair<std::string, const ESM::BirthSign*> > birthSigns;
 
-        MWWorld::Store<ESM::BirthSign>::iterator it = signs.begin();
-        for (; it != signs.end(); ++it)
+        for (const ESM::BirthSign& sign : signs)
         {
-            birthSigns.push_back(std::make_pair(it->mId, &(*it)));
+            birthSigns.push_back(std::make_pair(sign.mId, &sign));
         }
         std::sort(birthSigns.begin(), birthSigns.end(), sortBirthSigns);
 
         int index = 0;
-        for (std::vector<std::pair<std::string, const ESM::BirthSign*> >::const_iterator it2 = birthSigns.begin();
-             it2 != birthSigns.end(); ++it2, ++index)
+        for (auto& birthsignPair : birthSigns)
         {
-            mBirthList->addItem(it2->second->mName, it2->first);
+            mBirthList->addItem(birthsignPair.second->mName, birthsignPair.first);
             if (mCurrentBirthId.empty())
             {
                 mBirthList->setIndexSelected(index);
-                mCurrentBirthId = it2->first;
+                mCurrentBirthId = birthsignPair.first;
             }
-            else if (Misc::StringUtils::ciEqual(it2->first, mCurrentBirthId))
+            else if (Misc::StringUtils::ciEqual(birthsignPair.first, mCurrentBirthId))
             {
                 mBirthList->setIndexSelected(index);
             }
+
+            index++;
         }
     }
 
     void BirthDialog::updateSpells()
     {
-        for (std::vector<MyGUI::Widget*>::iterator it = mSpellItems.begin(); it != mSpellItems.end(); ++it)
+        for (MyGUI::Widget* widget : mSpellItems)
         {
-            MyGUI::Gui::getInstance().destroyWidget(*it);
+            MyGUI::Gui::getInstance().destroyWidget(widget);
         }
         mSpellItems.clear();
 
@@ -225,8 +235,8 @@ namespace MWGui
                 mSpellItems.push_back(label);
                 coord.top += lineHeight;
 
-                std::vector<std::string>::const_iterator end = categories[category].spells.end();
-                for (std::vector<std::string>::const_iterator it = categories[category].spells.begin(); it != end; ++it)
+                end = categories[category].spells.end();
+                for (it = categories[category].spells.begin(); it != end; ++it)
                 {
                     const std::string &spellId = *it;
                     spellWidget = mSpellArea->createWidget<Widgets::MWSpell>("MW_StatName", coord, MyGUI::Align::Default, std::string("Spell") + MyGUI::utility::toString(i));
@@ -244,6 +254,11 @@ namespace MWGui
                 }
             }
         }
-    }
 
+        // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the scrollbar is hidden
+        mSpellArea->setVisibleVScroll(false);
+        mSpellArea->setCanvasSize(MyGUI::IntSize(mSpellArea->getWidth(), std::max(mSpellArea->getHeight(), coord.top)));
+        mSpellArea->setVisibleVScroll(true);
+        mSpellArea->setViewOffset(MyGUI::IntPoint(0, 0));
+    }
 }

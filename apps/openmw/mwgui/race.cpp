@@ -2,13 +2,11 @@
 
 #include <MyGUI_ListBox.h>
 #include <MyGUI_ImageBox.h>
-#include <MyGUI_RenderManager.h>
 #include <MyGUI_Gui.h>
 
 #include <osg/Texture2D>
 
-#include <boost/format.hpp>
-
+#include <components/debug/debuglog.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
 
 #include "../mwworld/esmstore.hpp"
@@ -41,9 +39,9 @@ namespace
 namespace MWGui
 {
 
-    RaceDialog::RaceDialog(osgViewer::Viewer* viewer, Resource::ResourceSystem* resourceSystem)
+    RaceDialog::RaceDialog(osg::Group* parent, Resource::ResourceSystem* resourceSystem)
       : WindowModal("openmw_chargen_race.layout")
-      , mViewer(viewer)
+      , mParent(parent)
       , mResourceSystem(resourceSystem)
       , mGenderIndex(0)
       , mFaceIndex(0)
@@ -123,20 +121,20 @@ namespace MWGui
             okButton->setCaption(MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", ""));
     }
 
-    void RaceDialog::open()
+    void RaceDialog::onOpen()
     {
-        WindowModal::open();
+        WindowModal::onOpen();
 
         updateRaces();
         updateSkills();
         updateSpellPowers();
 
-        mPreviewImage->setRenderItemTexture(NULL);
+        mPreviewImage->setRenderItemTexture(nullptr);
 
-        mPreview.reset(NULL);
-        mPreviewTexture.reset(NULL);
+        mPreview.reset(nullptr);
+        mPreviewTexture.reset(nullptr);
 
-        mPreview.reset(new MWRender::RaceSelectionPreview(mViewer, mResourceSystem));
+        mPreview.reset(new MWRender::RaceSelectionPreview(mParent, mResourceSystem));
         mPreview->rebuild();
         mPreview->setAngle (mCurrentAngle);
 
@@ -146,6 +144,7 @@ namespace MWGui
 
         const ESM::NPC& proto = mPreview->getPrototype();
         setRaceId(proto.mRace);
+        setGender(proto.isMale() ? GM_Male : GM_Female);
         recountParts();
 
         for (unsigned int i=0; i<mAvailableHeads.size(); ++i)
@@ -165,6 +164,8 @@ namespace MWGui
         size_t initialPos = mHeadRotate->getScrollRange()/2+mHeadRotate->getScrollRange()/10;
         mHeadRotate->setScrollPosition(initialPos);
         onHeadRotate(mHeadRotate, initialPos);
+
+        MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mRaceList);
     }
 
     void RaceDialog::setRaceId(const std::string &raceId)
@@ -185,12 +186,14 @@ namespace MWGui
         updateSpellPowers();
     }
 
-    void RaceDialog::close()
+    void RaceDialog::onClose()
     {
-        mPreviewImage->setRenderItemTexture(NULL);
+        WindowModal::onClose();
 
-        mPreviewTexture.reset(NULL);
-        mPreview.reset(NULL);
+        mPreviewImage->setRenderItemTexture(nullptr);
+
+        mPreviewTexture.reset(nullptr);
+        mPreview.reset(nullptr);
     }
 
     // widget controls
@@ -209,7 +212,7 @@ namespace MWGui
 
     void RaceDialog::onHeadRotate(MyGUI::ScrollBar* scroll, size_t _position)
     {
-        float angle = (float(_position) / (scroll->getScrollRange()-1) - 0.5f) * 3.14f * 2;
+        float angle = (float(_position) / (scroll->getScrollRange()-1) - 0.5f) * osg::PI * 2;
         mPreview->setAngle (angle);
 
         mCurrentAngle = angle;
@@ -287,9 +290,8 @@ namespace MWGui
         const MWWorld::Store<ESM::BodyPart> &store =
             MWBase::Environment::get().getWorld()->getStore().get<ESM::BodyPart>();
 
-        for (MWWorld::Store<ESM::BodyPart>::iterator it = store.begin(); it != store.end(); ++it)
+        for (const ESM::BodyPart& bodypart : store)
         {
-            const ESM::BodyPart& bodypart = *it;
             if (bodypart.mData.mFlags & ESM::BodyPart::BPF_NotPlayable)
                 continue;
             if (bodypart.mData.mType != ESM::BodyPart::MT_Skin)
@@ -326,8 +328,11 @@ namespace MWGui
         record.mRace = mCurrentRaceId;
         record.setIsMale(mGenderIndex == 0);
 
-        record.mHead = mAvailableHeads[mFaceIndex];
-        record.mHair = mAvailableHairs[mHairIndex];
+        if (mFaceIndex >= 0 && mFaceIndex < int(mAvailableHeads.size()))
+            record.mHead = mAvailableHeads[mFaceIndex];
+
+        if (mHairIndex >= 0 && mHairIndex < int(mAvailableHairs.size()))
+            record.mHair = mAvailableHairs[mHairIndex];
 
         try
         {
@@ -335,7 +340,7 @@ namespace MWGui
         }
         catch (std::exception& e)
         {
-            std::cerr << "Error creating preview: " << e.what() << std::endl;
+            Log(Debug::Error) << "Error creating preview: " << e.what();
         }
     }
 
@@ -347,22 +352,21 @@ namespace MWGui
             MWBase::Environment::get().getWorld()->getStore().get<ESM::Race>();
 
         std::vector<std::pair<std::string, std::string> > items; // ID, name
-        MWWorld::Store<ESM::Race>::iterator it = races.begin();
-        for (; it != races.end(); ++it)
+        for (const ESM::Race& race : races)
         {
-            bool playable = it->mData.mFlags & ESM::Race::Playable;
+            bool playable = race.mData.mFlags & ESM::Race::Playable;
             if (!playable) // Only display playable races
                 continue;
 
-            items.push_back(std::make_pair(it->mId, it->mName));
+            items.push_back(std::make_pair(race.mId, race.mName));
         }
         std::sort(items.begin(), items.end(), sortRaces);
 
         int index = 0;
-        for (std::vector<std::pair<std::string, std::string> >::const_iterator it = items.begin(); it != items.end(); ++it)
+        for (auto& item : items)
         {
-            mRaceList->addItem(it->second, it->first);
-            if (Misc::StringUtils::ciEqual(it->first, mCurrentRaceId))
+            mRaceList->addItem(item.second, item.first);
+            if (Misc::StringUtils::ciEqual(item.first, mCurrentRaceId))
                 mRaceList->setIndexSelected(index);
             ++index;
         }
@@ -370,9 +374,9 @@ namespace MWGui
 
     void RaceDialog::updateSkills()
     {
-        for (std::vector<MyGUI::Widget*>::iterator it = mSkillItems.begin(); it != mSkillItems.end(); ++it)
+        for (MyGUI::Widget* widget : mSkillItems)
         {
-            MyGUI::Gui::getInstance().destroyWidget(*it);
+            MyGUI::Gui::getInstance().destroyWidget(widget);
         }
         mSkillItems.clear();
 
@@ -407,9 +411,9 @@ namespace MWGui
 
     void RaceDialog::updateSpellPowers()
     {
-        for (std::vector<MyGUI::Widget*>::iterator it = mSpellPowerItems.begin(); it != mSpellPowerItems.end(); ++it)
+        for (MyGUI::Widget* widget : mSpellPowerItems)
         {
-            MyGUI::Gui::getInstance().destroyWidget(*it);
+            MyGUI::Gui::getInstance().destroyWidget(widget);
         }
         mSpellPowerItems.clear();
 
@@ -422,11 +426,9 @@ namespace MWGui
         const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
         const ESM::Race *race = store.get<ESM::Race>().find(mCurrentRaceId);
 
-        std::vector<std::string>::const_iterator it = race->mPowers.mList.begin();
-        std::vector<std::string>::const_iterator end = race->mPowers.mList.end();
-        for (int i = 0; it != end; ++it)
+        int i = 0;
+        for (const std::string& spellpower : race->mPowers.mList)
         {
-            const std::string &spellpower = *it;
             Widgets::MWSpellPtr spellPowerWidget = mSpellPowerList->createWidget<Widgets::MWSpell>("MW_StatName", coord, MyGUI::Align::Default, std::string("SpellPower") + MyGUI::utility::toString(i));
             spellPowerWidget->setSpellId(spellpower);
             spellPowerWidget->setUserString("ToolTipType", "Spell");

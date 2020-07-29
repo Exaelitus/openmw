@@ -9,7 +9,6 @@
 #include "../mwbase/windowmanager.hpp"
 
 #include "../mwworld/ptr.hpp"
-#include "../mwworld/actiontake.hpp"
 #include "../mwworld/actionequip.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/cellstore.hpp"
@@ -21,6 +20,7 @@
 #include "../mwrender/objects.hpp"
 #include "../mwrender/renderinginterface.hpp"
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/weapontype.hpp"
 
 #include "../mwgui/tooltips.hpp"
 
@@ -53,11 +53,12 @@ namespace MWClass
     std::string Armor::getName (const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::Armor> *ref = ptr.get<ESM::Armor>();
+        const std::string& name = ref->mBase->mName;
 
-        return ref->mBase->mName;
+        return !name.empty() ? name : ref->mBase->mId;
     }
 
-    boost::shared_ptr<MWWorld::Action> Armor::activate (const MWWorld::Ptr& ptr,
+    std::shared_ptr<MWWorld::Action> Armor::activate (const MWWorld::Ptr& ptr,
         const MWWorld::Ptr& actor) const
     {
         return defaultItemActivate(ptr, actor);
@@ -142,17 +143,14 @@ namespace MWClass
         const MWWorld::Store<ESM::GameSetting> &gmst =
             MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
 
-        float iWeight = floor(gmst.find(typeGmst)->getFloat());
+        float iWeight = floor(gmst.find(typeGmst)->mValue.getFloat());
 
         float epsilon = 0.0005f;
 
-        if (ref->mBase->mData.mWeight == 0)
-            return ESM::Skill::Unarmored;
-
-        if (ref->mBase->mData.mWeight <= iWeight * gmst.find ("fLightMaxMod")->getFloat() + epsilon)
+        if (ref->mBase->mData.mWeight <= iWeight * gmst.find ("fLightMaxMod")->mValue.getFloat() + epsilon)
             return ESM::Skill::LightArmor;
 
-        if (ref->mBase->mData.mWeight <= iWeight * gmst.find ("fMedMaxMod")->getFloat() + epsilon)
+        if (ref->mBase->mData.mWeight <= iWeight * gmst.find ("fMedMaxMod")->mValue.getFloat() + epsilon)
             return ESM::Skill::MediumArmor;
 
         else
@@ -168,7 +166,7 @@ namespace MWClass
 
     void Armor::registerSelf()
     {
-        boost::shared_ptr<Class> instance (new Armor);
+        std::shared_ptr<Class> instance (new Armor);
 
         registerClass (typeid (ESM::Armor).name(), instance);
     }
@@ -202,41 +200,41 @@ namespace MWClass
         return ref->mBase->mIcon;
     }
 
-    bool Armor::hasToolTip (const MWWorld::ConstPtr& ptr) const
-    {
-        const MWWorld::LiveCellRef<ESM::Armor> *ref = ptr.get<ESM::Armor>();
-
-        return (ref->mBase->mName != "");
-    }
-
     MWGui::ToolTipInfo Armor::getToolTipInfo (const MWWorld::ConstPtr& ptr, int count) const
     {
         const MWWorld::LiveCellRef<ESM::Armor> *ref = ptr.get<ESM::Armor>();
 
         MWGui::ToolTipInfo info;
-        info.caption = ref->mBase->mName + MWGui::ToolTips::getCountString(count);
+        info.caption = MyGUI::TextIterator::toTagsString(getName(ptr)) + MWGui::ToolTips::getCountString(count);
         info.icon = ref->mBase->mIcon;
 
         std::string text;
 
         // get armor type string (light/medium/heavy)
-        int armorType = getEquipmentSkill(ptr);
         std::string typeText;
-        if (armorType == ESM::Skill::LightArmor)
-            typeText = "#{sLight}";
-        else if (armorType == ESM::Skill::MediumArmor)
-            typeText = "#{sMedium}";
+        if (ref->mBase->mData.mWeight == 0)
+            typeText = "";
         else
-            typeText = "#{sHeavy}";
+        {
+            int armorType = getEquipmentSkill(ptr);       
+            if (armorType == ESM::Skill::LightArmor)
+                typeText = "#{sLight}";
+            else if (armorType == ESM::Skill::MediumArmor)
+                typeText = "#{sMedium}";
+            else
+                typeText = "#{sHeavy}";
+        }
 
-        text += "\n#{sArmorRating}: " + MWGui::ToolTips::toString(getEffectiveArmorRating(ptr,
-            MWMechanics::getPlayer()));
+        text += "\n#{sArmorRating}: " + MWGui::ToolTips::toString(static_cast<int>(getEffectiveArmorRating(ptr,
+            MWMechanics::getPlayer())));
 
         int remainingHealth = getItemHealth(ptr);
         text += "\n#{sCondition}: " + MWGui::ToolTips::toString(remainingHealth) + "/"
                 + MWGui::ToolTips::toString(ref->mBase->mData.mHealth);
 
-        text += "\n#{sWeight}: " + MWGui::ToolTips::toString(ref->mBase->mData.mWeight) + " (" + typeText + ")";
+        if (typeText != "")
+            text += "\n#{sWeight}: " + MWGui::ToolTips::toString(ref->mBase->mData.mWeight) + " (" + typeText + ")";
+
         text += MWGui::ToolTips::getValueString(ref->mBase->mData.mValue, "#{sValue}");
 
         if (MWBase::Environment::get().getWindowManager()->getFullHelp()) {
@@ -273,31 +271,31 @@ namespace MWClass
         return record->mId;
     }
 
-    int Armor::getEffectiveArmorRating(const MWWorld::ConstPtr &ptr, const MWWorld::Ptr &actor) const
+    float Armor::getEffectiveArmorRating(const MWWorld::ConstPtr &ptr, const MWWorld::Ptr &actor) const
     {
         const MWWorld::LiveCellRef<ESM::Armor> *ref = ptr.get<ESM::Armor>();
 
         int armorSkillType = getEquipmentSkill(ptr);
-        int armorSkill = actor.getClass().getSkill(actor, armorSkillType);
+        float armorSkill = actor.getClass().getSkill(actor, armorSkillType);
 
         const MWBase::World *world = MWBase::Environment::get().getWorld();
-        int iBaseArmorSkill = world->getStore().get<ESM::GameSetting>().find("iBaseArmorSkill")->getInt();
+        int iBaseArmorSkill = world->getStore().get<ESM::GameSetting>().find("iBaseArmorSkill")->mValue.getInteger();
 
         if(ref->mBase->mData.mWeight == 0)
             return ref->mBase->mData.mArmor;
         else
-            return ref->mBase->mData.mArmor * armorSkill / iBaseArmorSkill;
+            return ref->mBase->mData.mArmor * armorSkill / static_cast<float>(iBaseArmorSkill);
     }
 
     std::pair<int, std::string> Armor::canBeEquipped(const MWWorld::ConstPtr &ptr, const MWWorld::Ptr &npc) const
     {
-        MWWorld::InventoryStore& invStore = npc.getClass().getInventoryStore(npc);
+        const MWWorld::InventoryStore& invStore = npc.getClass().getInventoryStore(npc);
 
-        if (ptr.getCellRef().getCharge() == 0)
+        if (getItemHealth(ptr) == 0)
             return std::make_pair(0, "#{sInventoryMessage1}");
 
         // slots that this item can be equipped in
-        std::pair<std::vector<int>, bool> slots_ = ptr.getClass().getEquipmentSlots(ptr);
+        std::pair<std::vector<int>, bool> slots_ = getEquipmentSlots(ptr);
 
         if (slots_.first.empty())
             return std::make_pair(0, "");
@@ -328,31 +326,23 @@ namespace MWClass
             // If equipping a shield, check if there's a twohanded weapon conflicting with it
             if(*slot == MWWorld::InventoryStore::Slot_CarriedLeft)
             {
-                MWWorld::ContainerStoreIterator weapon = invStore.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
-
-                if(weapon == invStore.end())
-                    return std::make_pair(1,"");
-
-                if(weapon->getTypeName() == typeid(ESM::Weapon).name() &&
-                        (weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::LongBladeTwoHand ||
-                weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::BluntTwoClose ||
-                weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::BluntTwoWide ||
-                weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::SpearTwoWide ||
-                weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::AxeTwoHand ||
-                weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::MarksmanBow ||
-                weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::MarksmanCrossbow))
+                MWWorld::ConstContainerStoreIterator weapon = invStore.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                if(weapon != invStore.end() && weapon->getTypeName() == typeid(ESM::Weapon).name())
                 {
-                    return std::make_pair(3,"");
+                    const MWWorld::LiveCellRef<ESM::Weapon> *ref = weapon->get<ESM::Weapon>();
+                    if (MWMechanics::getWeaponType(ref->mBase->mData.mType)->mFlags & ESM::WeaponType::TwoHanded)
+                        return std::make_pair(3,"");
                 }
+
                 return std::make_pair(1,"");
             }
         }
         return std::make_pair(1,"");
     }
 
-    boost::shared_ptr<MWWorld::Action> Armor::use (const MWWorld::Ptr& ptr) const
+    std::shared_ptr<MWWorld::Action> Armor::use (const MWWorld::Ptr& ptr, bool force) const
     {
-        boost::shared_ptr<MWWorld::Action> action(new MWWorld::ActionEquip(ptr));
+        std::shared_ptr<MWWorld::Action> action(new MWWorld::ActionEquip(ptr, force));
 
         action->setSound(getUpSoundId(ptr));
 

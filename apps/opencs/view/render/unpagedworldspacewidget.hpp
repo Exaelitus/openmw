@@ -17,6 +17,7 @@ namespace CSMDoc
 namespace CSMWorld
 {
     class IdTable;
+    class CellCoordinates;
 }
 
 namespace CSVRender
@@ -25,10 +26,11 @@ namespace CSVRender
     {
             Q_OBJECT
 
+            CSMDoc::Document& mDocument;
             std::string mCellId;
             CSMWorld::IdTable *mCellsModel;
             CSMWorld::IdTable *mReferenceablesModel;
-            std::auto_ptr<Cell> mCell;
+            std::unique_ptr<Cell> mCell;
 
             void update();
 
@@ -47,6 +49,9 @@ namespace CSVRender
             virtual void clearSelection (int elementMask);
 
             /// \param elementMask Elements to be affected by the select operation
+            virtual void invertSelection (int elementMask);
+
+            /// \param elementMask Elements to be affected by the select operation
             virtual void selectAll (int elementMask);
 
             // Select everything that references the same ID as at least one of the elements
@@ -56,6 +61,10 @@ namespace CSVRender
             virtual void selectAllWithSameParentId (int elementMask);
 
             virtual std::string getCellId (const osg::Vec3f& point) const;
+
+            virtual Cell* getCell(const osg::Vec3d& point) const;
+
+            virtual Cell* getCell(const CSMWorld::CellCoordinates& coords) const;
 
             virtual std::vector<osg::ref_ptr<TagBase> > getSelection (unsigned int elementMask)
                 const;
@@ -83,6 +92,13 @@ namespace CSVRender
 
             virtual void referenceAdded (const QModelIndex& index, int start, int end);
 
+            virtual void pathgridDataChanged (const QModelIndex& topLeft, const QModelIndex& bottomRight);
+
+            virtual void pathgridAboutToBeRemoved (const QModelIndex& parent, int start, int end);
+
+            virtual void pathgridAdded (const QModelIndex& parent, int start, int end);
+
+
             virtual std::string getStartupInstruction();
 
         protected:
@@ -94,6 +110,8 @@ namespace CSVRender
             void cellDataChanged (const QModelIndex& topLeft, const QModelIndex& bottomRight);
 
             void cellRowsAboutToBeRemoved (const QModelIndex& parent, int start, int end);
+
+            void assetTablesChanged ();
 
         signals:
 

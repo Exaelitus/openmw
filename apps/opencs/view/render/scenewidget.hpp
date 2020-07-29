@@ -1,17 +1,19 @@
 #ifndef OPENCS_VIEW_SCENEWIDGET_H
 #define OPENCS_VIEW_SCENEWIDGET_H
 
+#include <map>
+#include <memory>
+
 #include <QWidget>
 #include <QTimer>
 
-#include <boost/shared_ptr.hpp>
+#include <osgViewer/View>
+#include <osgViewer/CompositeViewer>
 
 #include "lightingday.hpp"
 #include "lightingnight.hpp"
 #include "lightingbright.hpp"
 
-#include <osgViewer/View>
-#include <osgViewer/CompositeViewer>
 
 namespace Resource
 {
@@ -30,93 +32,133 @@ namespace CSVWidget
     class SceneToolbar;
 }
 
+namespace CSMPrefs
+{
+    class Setting;
+}
+
 namespace CSVRender
 {
+    class CameraController;
+    class FreeCameraController;
+    class OrbitCameraController;
     class Lighting;
 
     class RenderWidget : public QWidget
     {
-        Q_OBJECT
+            Q_OBJECT
 
-    public:
-        RenderWidget(QWidget* parent = 0, Qt::WindowFlags f = 0);
-        virtual ~RenderWidget();
+        public:
+            RenderWidget(QWidget* parent = nullptr, Qt::WindowFlags f = Qt::WindowFlags());
+            virtual ~RenderWidget();
 
-        void flagAsModified();
+            /// Initiates a request to redraw the view
+            void flagAsModified();
 
-        void setVisibilityMask(int mask);
+            void setVisibilityMask(int mask);
 
-        bool eventFilter(QObject *, QEvent *);
+            osg::Camera *getCamera();
 
-        osg::Camera *getCamera();
+        protected:
 
-    protected:
+            osg::ref_ptr<osgViewer::View> mView;
+            osg::ref_ptr<osg::Group> mRootNode;
 
-        osg::ref_ptr<osgViewer::View> mView;
+            void updateCameraParameters(double overrideAspect = -1.0);
 
-        osg::Group* mRootNode;
+            QTimer mTimer;
 
-        QTimer mTimer;
+        protected slots:
+
+            void toggleRenderStats();
     };
 
-    // Extension of RenderWidget to support lighting mode selection & toolbar
+    /// Extension of RenderWidget to support lighting mode selection & toolbar
     class SceneWidget : public RenderWidget
     {
-        Q_OBJECT
-    public:
-        SceneWidget(boost::shared_ptr<Resource::ResourceSystem> resourceSystem, QWidget* parent = 0, Qt::WindowFlags f = 0);
-        virtual ~SceneWidget();
+            Q_OBJECT
+        public:
+            SceneWidget(std::shared_ptr<Resource::ResourceSystem> resourceSystem, QWidget* parent = nullptr,
+                        Qt::WindowFlags f = Qt::WindowFlags(), bool retrieveInput = true);
+            virtual ~SceneWidget();
 
-        CSVWidget::SceneToolMode *makeLightingSelector (CSVWidget::SceneToolbar *parent);
-        ///< \attention The created tool is not added to the toolbar (via addTool). Doing that
-        /// is the responsibility of the calling function.
+            CSVWidget::SceneToolMode *makeLightingSelector (CSVWidget::SceneToolbar *parent);
+            ///< \attention The created tool is not added to the toolbar (via addTool). Doing that
+            /// is the responsibility of the calling function.
 
-        void setDefaultAmbient (const osg::Vec4f& colour);
-        ///< \note The actual ambient colour may differ based on lighting settings.
+            void setDefaultAmbient (const osg::Vec4f& colour);
+            ///< \note The actual ambient colour may differ based on lighting settings.
 
-    protected:
-        void setLighting (Lighting *lighting);
-        ///< \attention The ownership of \a lighting is not transferred to *this.
+            void setExterior (bool isExterior);
 
-        void setAmbient(const osg::Vec4f& ambient);
+        protected:
+            void setLighting (Lighting *lighting);
+            ///< \attention The ownership of \a lighting is not transferred to *this.
 
-        boost::shared_ptr<Resource::ResourceSystem> mResourceSystem;
+            void setAmbient(const osg::Vec4f& ambient);
 
-        Lighting* mLighting;
+            virtual void mouseMoveEvent (QMouseEvent *event);
+            virtual void wheelEvent (QWheelEvent *event);
 
-        osg::Vec4f mDefaultAmbient;
-        bool mHasDefaultAmbient;
-        LightingDay mLightingDay;
-        LightingNight mLightingNight;
-        LightingBright mLightingBright;
+            std::shared_ptr<Resource::ResourceSystem> mResourceSystem;
 
-    private slots:
+            Lighting* mLighting;
 
-        void selectLightingMode (const std::string& mode);
+            osg::Vec4f mDefaultAmbient;
+            bool mHasDefaultAmbient;
+            bool mIsExterior;
+            LightingDay mLightingDay;
+            LightingNight mLightingNight;
+            LightingBright mLightingBright;
+
+            int mPrevMouseX, mPrevMouseY;
+            
+            /// Tells update that camera isn't set
+            bool mCamPositionSet;
+
+            FreeCameraController* mFreeCamControl;
+            OrbitCameraController* mOrbitCamControl;
+            CameraController* mCurrentCamControl;
+
+        public slots:
+            void update(double dt);
+
+        protected slots:
+
+            virtual void settingChanged (const CSMPrefs::Setting *setting);
+
+            void selectNavigationMode (const std::string& mode);
+
+        private slots:
+
+            void selectLightingMode (const std::string& mode);
 
         signals:
 
-             void focusToolbarRequest();
+            void focusToolbarRequest();
     };
 
 
     // There are rendering glitches when using multiple Viewer instances, work around using CompositeViewer with multiple views
     class CompositeViewer : public QObject, public osgViewer::CompositeViewer
     {
-        Q_OBJECT
-    public:
-        CompositeViewer();
+            Q_OBJECT
+        public:
+            CompositeViewer();
 
-        static CompositeViewer& get();
+            static CompositeViewer& get();
 
-        QTimer mTimer;
+            QTimer mTimer;
 
-    private:
-        osg::Timer mFrameTimer;
-        double mSimulationTime;
+        private:
+            osg::Timer mFrameTimer;
+            double mSimulationTime;
 
-    public slots:
-        void update();
+        public slots:
+            void update();
+
+        signals:
+            void simulationUpdated(double dt);
     };
 
 }

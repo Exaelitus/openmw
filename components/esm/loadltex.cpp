@@ -17,7 +17,7 @@ namespace ESM
         while (esm.hasMoreSubs())
         {
             esm.getSubName();
-            switch (esm.retSubName().val)
+            switch (esm.retSubName().intval)
             {
                 case ESM::SREC_NAME:
                     mId = esm.getHString();
@@ -59,7 +59,7 @@ namespace ESM
 
     void LandTexture::blank()
     {
+        mId.clear();
         mTexture.clear();
-        mIndex = -1;
     }
 }

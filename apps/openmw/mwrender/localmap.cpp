@@ -1,21 +1,23 @@
 #include "localmap.hpp"
 
-#include <iostream>
 #include <stdint.h>
 
 #include <osg/Fog>
 #include <osg/LightModel>
 #include <osg/Texture2D>
 #include <osg/ComputeBoundsVisitor>
+#include <osg/LightSource>
+#include <osg/PolygonMode>
 
 #include <osgDB/ReadFile>
 
-#include <osgViewer/Viewer>
-
+#include <components/debug/debuglog.hpp>
 #include <components/esm/fogstate.hpp>
 #include <components/esm/loadcell.hpp>
+#include <components/misc/constants.hpp>
 #include <components/settings/settings.hpp>
 #include <components/sceneutil/visitor.hpp>
+#include <components/sceneutil/shadow.hpp>
 #include <components/files/memorystream.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -68,15 +70,18 @@ namespace
 namespace MWRender
 {
 
-LocalMap::LocalMap(osgViewer::Viewer* viewer)
-    : mViewer(viewer)
+LocalMap::LocalMap(osg::Group* root)
+    : mRoot(root)
     , mMapResolution(Settings::Manager::getInt("local map resolution", "Map"))
-    , mMapWorldSize(8192.f)
-    , mCellDistance(Settings::Manager::getInt("local map cell distance", "Map"))
+    , mMapWorldSize(Constants::CellSizeInUnits)
+    , mCellDistance(Constants::CellGridRadius)
     , mAngle(0.f)
     , mInterior(false)
 {
-    mRoot = mViewer->getSceneData()->asGroup();
+    // Increase map resolution, if use UI scaling
+    float uiScale = Settings::Manager::getFloat("scaling factor", "GUI");
+    if (uiScale > 1.0)
+        mMapResolution *= uiScale;
 
     SceneUtil::FindByNameVisitor find("Scene Root");
     mRoot->accept(find);
@@ -87,10 +92,10 @@ LocalMap::LocalMap(osgViewer::Viewer* viewer)
 
 LocalMap::~LocalMap()
 {
-    for (CameraVector::iterator it = mActiveCameras.begin(); it != mActiveCameras.end(); ++it)
-        mRoot->removeChild(*it);
-    for (CameraVector::iterator it = mCamerasPendingRemoval.begin(); it != mCamerasPendingRemoval.end(); ++it)
-        mRoot->removeChild(*it);
+    for (auto& camera : mActiveCameras)
+        removeCamera(camera);
+    for (auto& camera : mCamerasPendingRemoval)
+        removeCamera(camera);
 }
 
 const osg::Vec2f LocalMap::rotatePoint(const osg::Vec2f& point, const osg::Vec2f& center, const float angle)
@@ -112,7 +117,7 @@ void LocalMap::saveFogOfWar(MWWorld::CellStore* cell)
 
         if (segment.mFogOfWarImage && segment.mHasFogState)
         {
-            std::auto_ptr<ESM::FogState> fog (new ESM::FogState());
+            std::unique_ptr<ESM::FogState> fog (new ESM::FogState());
             fog->mFogTextures.push_back(ESM::FogTexture());
 
             segment.saveFogOfWar(fog->mFogTextures.back());
@@ -129,7 +134,7 @@ void LocalMap::saveFogOfWar(MWWorld::CellStore* cell)
         const int segsX = static_cast<int>(std::ceil(length.x() / mMapWorldSize));
         const int segsY = static_cast<int>(std::ceil(length.y() / mMapWorldSize));
 
-        std::auto_ptr<ESM::FogState> fog (new ESM::FogState());
+        std::unique_ptr<ESM::FogState> fog (new ESM::FogState());
 
         fog->mBounds.mMinX = mBounds.xMin();
         fog->mBounds.mMaxX = mBounds.xMax();
@@ -163,23 +168,25 @@ void LocalMap::saveFogOfWar(MWWorld::CellStore* cell)
 osg::ref_ptr<osg::Camera> LocalMap::createOrthographicCamera(float x, float y, float width, float height, const osg::Vec3d& upVector, float zmin, float zmax)
 {
     osg::ref_ptr<osg::Camera> camera (new osg::Camera);
-
     camera->setProjectionMatrixAsOrtho(-width/2, width/2, -height/2, height/2, 5, (zmax-zmin) + 10);
     camera->setComputeNearFarMode(osg::Camera::DO_NOT_COMPUTE_NEAR_FAR);
     camera->setViewMatrixAsLookAt(osg::Vec3d(x, y, zmax + 5), osg::Vec3d(x, y, zmin), upVector);
-    camera->setReferenceFrame(osg::Camera::ABSOLUTE_RF);
+    camera->setReferenceFrame(osg::Camera::ABSOLUTE_RF_INHERIT_VIEWPOINT);
     camera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT, osg::Camera::PIXEL_BUFFER_RTT);
     camera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 1.f));
     camera->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     camera->setRenderOrder(osg::Camera::PRE_RENDER);
 
-    camera->setCullMask(Mask_Scene|Mask_SimpleWater|Mask_Terrain);
+    camera->setCullMask(Mask_Scene | Mask_SimpleWater | Mask_Terrain | Mask_Object | Mask_Static);
     camera->setNodeMask(Mask_RenderToTexture);
 
+    // Disable small feature culling, it's not going to be reliable for this camera
+    osg::Camera::CullingMode cullingMode = (osg::Camera::DEFAULT_CULLING|osg::Camera::FAR_PLANE_CULLING) & ~(osg::CullStack::SMALL_FEATURE_CULLING);
+    camera->setCullingMode(cullingMode);
+
     osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet;
-    stateset->setMode(GL_LIGHTING, osg::StateAttribute::ON);
-    stateset->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
-    stateset->setMode(GL_CULL_FACE, osg::StateAttribute::ON);
+    stateset->setAttribute(new osg::PolygonMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::FILL), osg::StateAttribute::OVERRIDE);
+
     // assign large value to effectively turn off fog
     // shaders don't respect glDisable(GL_FOG)
     osg::ref_ptr<osg::Fog> fog (new osg::Fog);
@@ -206,9 +213,10 @@ osg::ref_ptr<osg::Camera> LocalMap::createOrthographicCamera(float x, float y, f
 
     lightSource->setStateSetModes(*stateset, osg::StateAttribute::ON|osg::StateAttribute::OVERRIDE);
 
+    SceneUtil::ShadowManager::disableShadowsForStateSet(stateset);
+
     camera->addChild(lightSource);
     camera->setStateSet(stateset);
-    camera->setGraphicsContext(mViewer->getCamera()->getGraphicsContext());
     camera->setViewport(0, 0, mMapResolution, mMapResolution);
     camera->setUpdateCallback(new CameraLocalUpdateCallback(this));
 
@@ -235,16 +243,46 @@ void LocalMap::setupRenderToTexture(osg::ref_ptr<osg::Camera> camera, int x, int
     segment.mMapTexture = texture;
 }
 
-void LocalMap::requestMap(std::set<const MWWorld::CellStore*> cells)
+bool needUpdate(std::set<std::pair<int, int> >& renderedGrid, std::set<std::pair<int, int> >& currentGrid, int cellX, int cellY)
 {
-    for (std::set<const MWWorld::CellStore*>::iterator it = cells.begin(); it != cells.end(); ++it)
+    // if all the cells of the current grid are contained in the rendered grid then we can keep the old render
+    for (int dx=-1;dx<2;dx+=1)
     {
-        const MWWorld::CellStore* cell = *it;
-        if (cell->isExterior())
-            requestExteriorMap(cell);
-        else
-            requestInteriorMap(cell);
+        for (int dy=-1;dy<2;dy+=1)
+        {
+            bool haveInRenderedGrid = renderedGrid.find(std::make_pair(cellX+dx,cellY+dy)) != renderedGrid.end();
+            bool haveInCurrentGrid = currentGrid.find(std::make_pair(cellX+dx,cellY+dy)) != currentGrid.end();
+            if (haveInCurrentGrid && !haveInRenderedGrid)
+                return true;
+        }
     }
+    return false;
+}
+
+void LocalMap::requestMap(const MWWorld::CellStore* cell)
+{
+    if (cell->isExterior())
+    {
+        int cellX = cell->getCell()->getGridX();
+        int cellY = cell->getCell()->getGridY();
+
+        MapSegment& segment = mSegments[std::make_pair(cellX, cellY)];
+        if (!needUpdate(segment.mGrid, mCurrentGrid, cellX, cellY))
+            return;
+        else
+        {
+            segment.mGrid = mCurrentGrid;
+            requestExteriorMap(cell);
+        }
+    }
+    else
+        requestInteriorMap(cell);
+}
+
+void LocalMap::addCell(MWWorld::CellStore *cell)
+{
+    if (cell->isExterior())
+        mCurrentGrid.emplace(cell->getCell()->getGridX(), cell->getCell()->getGridY());
 }
 
 void LocalMap::removeCell(MWWorld::CellStore *cell)
@@ -252,7 +290,11 @@ void LocalMap::removeCell(MWWorld::CellStore *cell)
     saveFogOfWar(cell);
 
     if (cell->isExterior())
-        mSegments.erase(std::make_pair(cell->getCell()->getGridX(), cell->getCell()->getGridY()));
+    {
+        std::pair<int, int> coords = std::make_pair(cell->getCell()->getGridX(), cell->getCell()->getGridY());
+        mSegments.erase(coords);
+        mCurrentGrid.erase(coords);
+    }
     else
         mSegments.clear();
 }
@@ -275,12 +317,18 @@ osg::ref_ptr<osg::Texture2D> LocalMap::getFogOfWarTexture(int x, int y)
         return found->second.mFogOfWarTexture;
 }
 
+void LocalMap::removeCamera(osg::Camera *cam)
+{
+    cam->removeChildren(0, cam->getNumChildren());
+    mRoot->removeChild(cam);
+}
+
 void LocalMap::markForRemoval(osg::Camera *cam)
 {
     CameraVector::iterator found = std::find(mActiveCameras.begin(), mActiveCameras.end(), cam);
     if (found == mActiveCameras.end())
     {
-        std::cerr << "trying to remove an inactive camera" << std::endl;
+        Log(Debug::Error) << "Error: trying to remove an inactive camera";
         return;
     }
     mActiveCameras.erase(found);
@@ -292,12 +340,8 @@ void LocalMap::cleanupCameras()
     if (mCamerasPendingRemoval.empty())
         return;
 
-    for (CameraVector::iterator it = mCamerasPendingRemoval.begin(); it != mCamerasPendingRemoval.end(); ++it)
-    {
-        (*it)->removeChildren(0, (*it)->getNumChildren());
-        (*it)->setGraphicsContext(NULL);
-        mRoot->removeChild(*it);
-    }
+    for (auto& camera : mCamerasPendingRemoval)
+        removeCamera(camera);
 
     mCamerasPendingRemoval.clear();
 }
@@ -309,7 +353,7 @@ void LocalMap::requestExteriorMap(const MWWorld::CellStore* cell)
     int x = cell->getCell()->getGridX();
     int y = cell->getCell()->getGridY();
 
-    osg::BoundingSphere bound = mViewer->getSceneData()->getBound();
+    osg::BoundingSphere bound = mSceneRoot->getBound();
     float zmin = bound.center().z() - bound.radius();
     float zmax = bound.center().z() + bound.radius();
 
@@ -330,7 +374,7 @@ void LocalMap::requestExteriorMap(const MWWorld::CellStore* cell)
 void LocalMap::requestInteriorMap(const MWWorld::CellStore* cell)
 {
     osg::ComputeBoundsVisitor computeBoundsVisitor;
-    computeBoundsVisitor.setTraversalMask(Mask_Scene|Mask_Terrain);
+    computeBoundsVisitor.setTraversalMask(Mask_Scene | Mask_Terrain | Mask_Object | Mask_Static);
     mSceneRoot->accept(computeBoundsVisitor);
 
     osg::BoundingBox bounds = computeBoundsVisitor.getBoundingBox();
@@ -451,7 +495,7 @@ void LocalMap::requestInteriorMap(const MWWorld::CellStore* cell)
                     // We are using the same bounds and angle as we were using when the textures were originally made. Segments should come out the same.
                     if (i >= int(fog->mFogTextures.size()))
                     {
-                        std::cout << "Warning: fog texture count mismatch" << std::endl;
+                        Log(Debug::Warning) << "Warning: fog texture count mismatch";
                         break;
                     }
 
@@ -565,7 +609,8 @@ void LocalMap::updatePlayer (const osg::Vec3f& position, const osg::Quat& orient
             if (!segment.mFogOfWarImage || !segment.mMapTexture)
                 continue;
 
-            unsigned char* data = segment.mFogOfWarImage->data();
+            uint32_t* data = (uint32_t*)segment.mFogOfWarImage->data();
+            bool changed = false;
             for (int texV = 0; texV<sFogOfWarResolution; ++texV)
             {
                 for (int texU = 0; texU<sFogOfWarResolution; ++texU)
@@ -577,14 +622,22 @@ void LocalMap::updatePlayer (const osg::Vec3f& position, const osg::Quat& orient
                     uint8_t alpha = (clr >> 24);
 
                     alpha = std::min( alpha, (uint8_t) (std::max(0.f, std::min(1.f, (sqrDist/sqrExploreRadius)))*255) );
-                    *(uint32_t*)data = (uint32_t) (alpha << 24);
+                    uint32_t val = (uint32_t) (alpha << 24);
+                    if ( *data != val)
+                    {
+                        *data = val;
+                        changed = true;
+                    }
 
-                    data += 4;
+                    ++data;
                 }
             }
 
-            segment.mHasFogState = true;
-            segment.mFogOfWarImage->dirty();
+            if (changed)
+            {
+                segment.mHasFogState = true;
+                segment.mFogOfWarImage->dirty();
+            }
         }
     }
 }
@@ -638,12 +691,10 @@ void LocalMap::MapSegment::loadFogOfWar(const ESM::FogTexture &esm)
         return;
     }
 
-    // TODO: deprecate tga and use raw data instead
-
-    osgDB::ReaderWriter* readerwriter = osgDB::Registry::instance()->getReaderWriterForExtension("tga");
+    osgDB::ReaderWriter* readerwriter = osgDB::Registry::instance()->getReaderWriterForExtension("png");
     if (!readerwriter)
     {
-        std::cerr << "Unable to load fog, can't find a tga ReaderWriter" << std::endl;
+        Log(Debug::Error) << "Error: Unable to load fog, can't find a png ReaderWriter" ;
         return;
     }
 
@@ -652,7 +703,7 @@ void LocalMap::MapSegment::loadFogOfWar(const ESM::FogTexture &esm)
     osgDB::ReaderWriter::ReadResult result = readerwriter->readImage(in);
     if (!result.success())
     {
-        std::cerr << "Failed to read fog: " << result.message() << " code " << result.status() << std::endl;
+        Log(Debug::Error) << "Error: Failed to read fog: " << result.message() << " code " << result.status();
         return;
     }
 
@@ -672,10 +723,10 @@ void LocalMap::MapSegment::saveFogOfWar(ESM::FogTexture &fog) const
 
     std::ostringstream ostream;
 
-    osgDB::ReaderWriter* readerwriter = osgDB::Registry::instance()->getReaderWriterForExtension("tga");
+    osgDB::ReaderWriter* readerwriter = osgDB::Registry::instance()->getReaderWriterForExtension("png");
     if (!readerwriter)
     {
-        std::cerr << "Unable to write fog, can't find a tga ReaderWriter" << std::endl;
+        Log(Debug::Error) << "Error: Unable to write fog, can't find a png ReaderWriter";
         return;
     }
 
@@ -684,7 +735,7 @@ void LocalMap::MapSegment::saveFogOfWar(ESM::FogTexture &fog) const
     osgDB::ReaderWriter::WriteResult result = readerwriter->writeImage(*mFogOfWarImage, ostream);
     if (!result.success())
     {
-        std::cerr << "Unable to write fog: " << result.message() << " code " << result.status() << std::endl;
+        Log(Debug::Error) << "Error: Unable to write fog: " << result.message() << " code " << result.status();
         return;
     }
     mFogOfWarImage->flipVertical();

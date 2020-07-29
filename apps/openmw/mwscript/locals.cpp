@@ -3,7 +3,7 @@
 #include <components/esm/loadscpt.hpp>
 #include <components/esm/variant.hpp>
 #include <components/esm/locals.hpp>
-
+#include <components/debug/debuglog.hpp>
 #include <components/compiler/locals.hpp>
 #include <components/compiler/exception.hpp>
 
@@ -12,8 +12,6 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwworld/esmstore.hpp"
-
-#include <iostream>
 
 namespace MWScript
 {
@@ -229,26 +227,28 @@ namespace MWScript
                     }
                     catch (std::exception& e)
                     {
-                        std::cerr << "Failed to read local variable state for script '"
-                                  << script << "' (legacy format): " << e.what()
-                                  << "\nNum shorts: " << numshorts << " / " << mShorts.size()
-                                  << " Num longs: " << numlongs << " / " << mLongs.size() << std::endl;
+                        Log(Debug::Error) << "Failed to read local variable state for script '"
+                                          << script << "' (legacy format): " << e.what()
+                                          << "\nNum shorts: " << numshorts << " / " << mShorts.size()
+                                          << " Num longs: " << numlongs << " / " << mLongs.size();
                     }
                 }
                 else
                 {
                     char type =  declarations.getType (iter->first);
-                    char index = declarations.getIndex (iter->first);
+                    int index2 = declarations.getIndex (iter->first);
+
+                    // silently ignore locals that don't exist anymore
+                    if (type == ' ' || index2 == -1)
+                        continue;
 
                     try
                     {
                         switch (type)
                         {
-                            case 's': mShorts.at (index) = iter->second.getInteger(); break;
-                            case 'l': mLongs.at (index) = iter->second.getInteger(); break;
-                            case 'f': mFloats.at (index) = iter->second.getFloat(); break;
-
-                            // silently ignore locals that don't exist anymore
+                            case 's': mShorts.at (index2) = iter->second.getInteger(); break;
+                            case 'l': mLongs.at (index2) = iter->second.getInteger(); break;
+                            case 'f': mFloats.at (index2) = iter->second.getFloat(); break;
                         }
                     }
                     catch (...)

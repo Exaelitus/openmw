@@ -12,6 +12,14 @@ CSMWorld::Resources::Resources (const VFS::Manager* vfs, const std::string& base
     const char * const *extensions)
 : mBaseDirectory (baseDirectory), mType (type)
 {
+    recreate(vfs, extensions);
+}
+
+void CSMWorld::Resources::recreate(const VFS::Manager* vfs, const char * const *extensions)
+{
+    mFiles.clear();
+    mIndex.clear();
+
     int baseSize = mBaseDirectory.size();
 
     const std::map<std::string, VFS::File*>& index = vfs->getIndex();
@@ -25,12 +33,12 @@ CSMWorld::Resources::Resources (const VFS::Manager* vfs, const std::string& base
 
         if (extensions)
         {
-            std::string::size_type index = filepath.find_last_of ('.');
+            std::string::size_type extensionIndex = filepath.find_last_of ('.');
 
-            if (index==std::string::npos)
+            if (extensionIndex==std::string::npos)
                 continue;
 
-            std::string extension = filepath.substr (index+1);
+            std::string extension = filepath.substr (extensionIndex+1);
 
             int i = 0;
 
@@ -69,7 +77,7 @@ int CSMWorld::Resources::getIndex (const std::string& id) const
         std::ostringstream stream;
         stream << "Invalid resource: " << mBaseDirectory << '/' << id;
 
-        throw std::runtime_error (stream.str().c_str());
+        throw std::runtime_error (stream.str());
     }
 
     return index;

@@ -4,10 +4,17 @@
 #include <string>
 #include <vector>
 #include <list>
+#include <set>
 #include <stdint.h>
+
+#include "../mwmechanics/actorutil.hpp"
+// For MWMechanics::GreetingState
+
+#include "../mwworld/ptr.hpp"
 
 namespace osg
 {
+    class Stats;
     class Vec3f;
 }
 
@@ -60,17 +67,11 @@ namespace MWBase
             virtual void drop (const MWWorld::CellStore *cellStore) = 0;
             ///< Deregister all objects in the given cell.
 
-            virtual void watchActor (const MWWorld::Ptr& ptr) = 0;
-            ///< On each update look for changes in a previously registered actor and update the
-            /// GUI accordingly.
-
             virtual void update (float duration, bool paused) = 0;
             ///< Update objects
             ///
             /// \param paused In game type does not currently advance (this usually means some GUI
             /// component is up).
-
-            virtual void advanceTime (float duration) = 0;
 
             virtual void setPlayerName (const std::string& name) = 0;
             ///< Set player name.
@@ -87,7 +88,9 @@ namespace MWBase
             virtual void setPlayerClass (const ESM::Class& class_) = 0;
             ///< Set player class to custom class.
 
-            virtual void rest(bool sleep) = 0;
+            virtual void restoreDynamicStats(MWWorld::Ptr actor, double hours, bool sleep) = 0;
+
+            virtual void rest(double hours, bool sleep) = 0;
             ///< If the player is sleeping or waiting, this should be called every hour.
             /// @param sleep is the player sleeping or waiting?
 
@@ -125,8 +128,8 @@ namespace MWBase
              *                    If this parameter is false, it will be determined by a line-of-sight and awareness check.
              * @return was the crime seen?
              */
-            virtual bool commitCrime (const MWWorld::Ptr& ptr, const MWWorld::Ptr& victim,
-                                      OffenseType type, int arg=0, bool victimAware=false) = 0;
+            virtual bool commitCrime (const MWWorld::Ptr& ptr, const MWWorld::Ptr& victim, OffenseType type,
+                                      const std::string& factionId="", int arg=0, bool victimAware=false) = 0;
             /// @return false if the attack was considered a "friendly hit" and forgiven
             virtual bool actorAttacked (const MWWorld::Ptr& victim, const MWWorld::Ptr& attacker) = 0;
 
@@ -137,9 +140,9 @@ namespace MWBase
             /// Utility to check if taking this item is illegal and calling commitCrime if so
             /// @param container The container the item is in; may be empty for an item in the world
             virtual void itemTaken (const MWWorld::Ptr& ptr, const MWWorld::Ptr& item, const MWWorld::Ptr& container,
-                                    int count) = 0;
-            /// Utility to check if opening (i.e. unlocking) this object is illegal and calling commitCrime if so
-            virtual void objectOpened (const MWWorld::Ptr& ptr, const MWWorld::Ptr& item) = 0;
+                                    int count, bool alarm = true) = 0;
+            /// Utility to check if unlocking this object is illegal and calling commitCrime if so
+            virtual void unlockAttempted (const MWWorld::Ptr& ptr, const MWWorld::Ptr& item) = 0;
             /// Attempt sleeping in a bed. If this is illegal, call commitCrime.
             /// @return was it illegal, and someone saw you doing it?
             virtual bool sleepInBed (const MWWorld::Ptr& ptr, const MWWorld::Ptr& bed) = 0;
@@ -159,12 +162,14 @@ namespace MWBase
             virtual void forceStateUpdate(const MWWorld::Ptr &ptr) = 0;
             ///< Forces an object to refresh its animation state.
 
-            virtual bool playAnimationGroup(const MWWorld::Ptr& ptr, const std::string& groupName, int mode, int number=1) = 0;
+            virtual bool playAnimationGroup(const MWWorld::Ptr& ptr, const std::string& groupName, int mode, int number=1, bool persist=false) = 0;
             ///< Run animation for a MW-reference. Calls to this function for references that are currently not
             /// in the scene should be ignored.
             ///
             /// \param mode 0 normal, 1 immediate start, 2 immediate loop
             /// \param count How many times the animation should be run
+            /// \param persist Whether the animation state should be stored in saved games
+            ///                and persist after cell unload.
             /// \return Success or error
 
             virtual void skipAnimation(const MWWorld::Ptr& ptr) = 0;
@@ -172,6 +177,9 @@ namespace MWBase
             /// references that are currently not in the scene should be ignored.
 
             virtual bool checkAnimationPlaying(const MWWorld::Ptr& ptr, const std::string& groupName) = 0;
+
+            /// Save the current animation state of managed references to their RefData.
+            virtual void persistAnimationStates() = 0;
 
             /// Update magic effects for an actor. Usually done automatically once per frame, but if we're currently
             /// paused we may want to do it manually (after equipping permanent enchantment)
@@ -183,6 +191,9 @@ namespace MWBase
             virtual void getObjectsInRange (const osg::Vec3f& position, float radius, std::vector<MWWorld::Ptr>& objects) = 0;
             virtual void getActorsInRange(const osg::Vec3f &position, float radius, std::vector<MWWorld::Ptr> &objects) = 0;
 
+            /// Check if there are actors in selected range
+            virtual bool isAnyActorInRange(const osg::Vec3f &position, float radius) = 0;
+
             ///Returns the list of actors which are siding with the given actor in fights
             /**ie AiFollow or AiEscort is active and the target is the actor **/
             virtual std::list<MWWorld::Ptr> getActorsSidingWith(const MWWorld::Ptr& actor) = 0;
@@ -192,6 +203,12 @@ namespace MWBase
             ///Returns a list of actors who are fighting the given actor within the fAlarmDistance
             /** ie AiCombat is active and the target is the actor **/
             virtual std::list<MWWorld::Ptr> getActorsFighting(const MWWorld::Ptr& actor) = 0;
+
+            virtual std::list<MWWorld::Ptr> getEnemiesNearby(const MWWorld::Ptr& actor) = 0;
+
+            /// Recursive versions of above methods
+            virtual void getActorsFollowing(const MWWorld::Ptr& actor, std::set<MWWorld::Ptr>& out) = 0;
+            virtual void getActorsSidingWith(const MWWorld::Ptr& actor, std::set<MWWorld::Ptr>& out) = 0;
 
             virtual void playerLoaded() = 0;
 
@@ -206,9 +223,26 @@ namespace MWBase
             virtual bool isAggressive (const MWWorld::Ptr& ptr, const MWWorld::Ptr& target) = 0;
 
             /// Resurrects the player if necessary
-            virtual void keepPlayerAlive() = 0;
+            virtual void resurrect(const MWWorld::Ptr& ptr) = 0;
 
+            virtual bool isCastingSpell (const MWWorld::Ptr& ptr) const = 0;
             virtual bool isReadyToBlock (const MWWorld::Ptr& ptr) const = 0;
+            virtual bool isAttackingOrSpell(const MWWorld::Ptr &ptr) const = 0;
+
+            virtual void castSpell(const MWWorld::Ptr& ptr, const std::string spellId, bool manualSpell) = 0;
+
+            virtual void processChangedSettings (const std::set< std::pair<std::string, std::string> >& settings) = 0;
+
+            virtual float getActorsProcessingRange() const = 0;
+
+            virtual void notifyDied(const MWWorld::Ptr& actor) = 0;
+
+            virtual bool onOpen(const MWWorld::Ptr& ptr) = 0;
+            virtual void onClose(const MWWorld::Ptr& ptr) = 0;
+
+            /// Check if the target actor was detected by an observer
+            /// If the observer is a non-NPC, check all actors in AI processing distance as observers
+            virtual bool isActorDetected(const MWWorld::Ptr& actor, const MWWorld::Ptr& observer) = 0;
 
             virtual void confiscateStolenItems (const MWWorld::Ptr& player, const MWWorld::Ptr& targetContainer) = 0;
 
@@ -217,9 +251,10 @@ namespace MWBase
             virtual std::vector<std::pair<std::string, int> > getStolenItemOwners(const std::string& itemid) = 0;
 
             /// Has the player stolen this item from the given owner?
-            virtual bool isItemStolenFrom(const std::string& itemid, const std::string& ownerid) = 0;
-            
-            virtual bool isAllowedToUse (const MWWorld::Ptr& ptr, const MWWorld::CellRef& cellref, MWWorld::Ptr& victim) = 0;
+            virtual bool isItemStolenFrom(const std::string& itemid, const MWWorld::Ptr& ptr) = 0;
+
+            virtual bool isBoundItem(const MWWorld::Ptr& item) = 0;
+            virtual bool isAllowedToUse (const MWWorld::Ptr& ptr, const MWWorld::Ptr& target, MWWorld::Ptr& victim) = 0;
 
             /// Turn actor into werewolf or normal form.
             virtual void setWerewolf(const MWWorld::Ptr& actor, bool werewolf) = 0;
@@ -227,6 +262,22 @@ namespace MWBase
             /// Sets the NPC's Acrobatics skill to match the fWerewolfAcrobatics GMST.
             /// It only applies to the current form the NPC is in.
             virtual void applyWerewolfAcrobatics(const MWWorld::Ptr& actor) = 0;
+
+            virtual void cleanupSummonedCreature(const MWWorld::Ptr& caster, int creatureActorId) = 0;
+
+            virtual void confiscateStolenItemToOwner(const MWWorld::Ptr &player, const MWWorld::Ptr &item, const MWWorld::Ptr& victim, int count) = 0;
+            virtual bool isAttackPreparing(const MWWorld::Ptr& ptr) = 0;
+            virtual bool isRunning(const MWWorld::Ptr& ptr) = 0;
+            virtual bool isSneaking(const MWWorld::Ptr& ptr) = 0;
+
+            virtual void reportStats(unsigned int frameNumber, osg::Stats& stats) const = 0;
+
+            virtual int getGreetingTimer(const MWWorld::Ptr& ptr) const = 0;
+            virtual float getAngleToPlayer(const MWWorld::Ptr& ptr) const  = 0;
+            virtual MWMechanics::GreetingState getGreetingState(const MWWorld::Ptr& ptr) const = 0;
+            virtual bool isTurningToPlayer(const MWWorld::Ptr& ptr) const = 0;
+
+            virtual void restoreStatsAfterCorprus(const MWWorld::Ptr& actor, const std::string& sourceId) = 0;
     };
 }
 

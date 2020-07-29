@@ -1,6 +1,8 @@
 #ifndef OPENMW_MWGUI_VIDEOWIDGET_H
 #define OPENMW_MWGUI_VIDEOWIDGET_H
 
+#include <memory>
+
 #include <MyGUI_Widget.h>
 
 namespace Video
@@ -25,6 +27,8 @@ namespace MWGui
         MYGUI_RTTI_DERIVED(VideoWidget)
 
         VideoWidget();
+        
+        ~VideoWidget();
 
         /// Set the VFS (virtual file system) to find the videos on.
         void setVFS(const VFS::Manager* vfs);
@@ -43,6 +47,10 @@ namespace MWGui
         /// Stop video and free resources (done automatically on destruction)
         void stop();
 
+        void pause();
+        void resume();
+        bool isPaused() const;
+
         /// Adjust the coordinates of this video widget relative to its parent,
         /// based on the dimensions of the playing video.
         /// @param stretch Stretch the video to fill the whole screen? If false,
@@ -51,8 +59,8 @@ namespace MWGui
 
     private:
         const VFS::Manager* mVFS;
-        std::auto_ptr<MyGUI::ITexture> mTexture;
-        std::auto_ptr<Video::VideoPlayer> mPlayer;
+        std::unique_ptr<MyGUI::ITexture> mTexture;
+        std::unique_ptr<Video::VideoPlayer> mPlayer;
     };
 
 }

@@ -52,6 +52,13 @@ void CSVWorld::ScriptErrorTable::addMessage (const std::string& message,
         columnItem->setFlags (columnItem->flags() ^ Qt::ItemIsEditable);
         setItem (row, 3, columnItem);
     }
+    else
+    {
+        QTableWidgetItem *lineItem = new QTableWidgetItem;
+        lineItem->setData (Qt::DisplayRole, "-");
+        lineItem->setFlags (lineItem->flags() ^ Qt::ItemIsEditable);
+        setItem (row, 1, lineItem);
+    }
 
     QTableWidgetItem *messageItem = new QTableWidgetItem (QString::fromUtf8 (message.c_str()));
     messageItem->setFlags (messageItem->flags() ^ Qt::ItemIsEditable);
@@ -76,13 +83,8 @@ CSVWorld::ScriptErrorTable::ScriptErrorTable (const CSMDoc::Document& document, 
     QStringList headers;
     headers << "Severity" << "Line" << "Description";
     setHorizontalHeaderLabels (headers);
-#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     horizontalHeader()->setSectionResizeMode (0, QHeaderView::ResizeToContents);
     horizontalHeader()->setSectionResizeMode (1, QHeaderView::ResizeToContents);
-#else
-    horizontalHeader()->setResizeMode (0, QHeaderView::ResizeToContents);
-    horizontalHeader()->setResizeMode (1, QHeaderView::ResizeToContents);
-#endif
     horizontalHeader()->setStretchLastSection (true);
     verticalHeader()->hide();
     setColumnHidden (3, true);
@@ -141,7 +143,7 @@ void CSVWorld::ScriptErrorTable::settingChanged (const CSMPrefs::Setting *settin
 
 void CSVWorld::ScriptErrorTable::cellClicked (int row, int column)
 {
-    if (item (row, 1))
+    if (item (row, 3))
     {
         int scriptLine = item (row, 1)->data (Qt::DisplayRole).toInt();
         int scriptColumn = item (row, 3)->data (Qt::DisplayRole).toInt();

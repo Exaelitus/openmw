@@ -12,6 +12,8 @@
 #include "aisequence.hpp"
 #include "drawstate.hpp"
 
+#include <components/esm/attr.hpp>
+
 namespace ESM
 {
     struct CreatureStats;
@@ -19,6 +21,14 @@ namespace ESM
 
 namespace MWMechanics
 {
+    struct CorprusStats
+    {
+        static const int sWorseningPeriod = 24;
+
+        int mWorsenings[ESM::Attribute::Length];
+        MWWorld::TimeStamp mNextWorsening;
+    };
+
     /// \brief Common creature stats
     ///
     ///
@@ -26,7 +36,7 @@ namespace MWMechanics
     {
         static int sActorId;
         DrawState_ mDrawState;
-        AttributeValue mAttributes[8];
+        AttributeValue mAttributes[ESM::Attribute::Length];
         DynamicStat<float> mDynamic[3]; // health, magicka, fatigue
         Spells mSpells;
         ActiveSpells mActiveSpells;
@@ -34,7 +44,8 @@ namespace MWMechanics
         Stat<int> mAiSettings[4];
         AiSequence mAiSequence;
         bool mDead;
-        bool mDied;
+        bool mDeathAnimationFinished;
+        bool mDied; // flag for OnDeath script function
         bool mMurdered;
         int mFriendlyHits;
         bool mTalkedTo;
@@ -61,11 +72,16 @@ namespace MWMechanics
         int mGoldPool;
 
         int mActorId;
+        int mHitAttemptActorId; // Stores an actor that attacked this actor. Only one is stored at a time,
+                                // and it is not changed if a different actor attacks. It is cleared when combat ends.
 
-        // The index of the death animation that was played
-        unsigned char mDeathAnimation;
+        // The index of the death animation that was played, or -1 if none played
+        signed char mDeathAnimation;
 
         MWWorld::TimeStamp mTimeOfDeath;
+
+        // The difference between view direction and lower body direction.
+        float mSideMovementAngle;
 
     public:
         typedef std::pair<int, std::string> SummonKey; // <ESM::MagicEffect index, spell ID>
@@ -75,6 +91,8 @@ namespace MWMechanics
         // Contains ActorIds of summoned creatures with an expired lifetime that have not been deleted yet.
         // This may be necessary when the creature is in an inactive cell.
         std::vector<int> mSummonGraveyard;
+
+        std::map<std::string, CorprusStats> mCorprusSpells;
 
     protected:
         int mLevel;
@@ -88,11 +106,12 @@ namespace MWMechanics
         bool needToRecalcDynamicStats();
         void setNeedRecalcDynamicStats(bool val);
 
+        float getFallHeight() const;
         void addToFallHeight(float height);
 
         /// Reset the fall height
         /// @return total fall height
-        float land();
+        float land(bool isPlayer=false);
 
         const AttributeValue & getAttribute(int index) const;
 
@@ -122,7 +141,7 @@ namespace MWMechanics
 
         void setAttribute(int index, const AttributeValue &value);
         // Shortcut to set only the base
-        void setAttribute(int index, int base);
+        void setAttribute(int index, float base);
 
         void setHealth(const DynamicStat<float> &value);
 
@@ -160,6 +179,9 @@ namespace MWMechanics
         bool isParalyzed() const;
 
         bool isDead() const;
+
+        bool isDeathAnimationFinished() const;
+        void setDeathAnimationFinished(bool finished);
 
         void notifyDied();
 
@@ -237,9 +259,11 @@ namespace MWMechanics
         bool getStance (Stance flag) const;
 
         void setLastHitObject(const std::string &objectid);
-        void setLastHitAttemptObject(const std::string &objectid);
         const std::string &getLastHitObject() const;
+        void setLastHitAttemptObject(const std::string &objectid);
         const std::string &getLastHitAttemptObject() const;
+        void setHitAttemptActorId(const int actorId);
+        int getHitAttemptActorId() const;
 
         // Note, this is just a cache to avoid checking the whole container store every frame. We don't need to store it in saves.
         // TODO: Put it somewhere else?
@@ -258,8 +282,8 @@ namespace MWMechanics
         void setGoldPool(int pool);
         int getGoldPool() const;
 
-        unsigned char getDeathAnimation() const;
-        void setDeathAnimation(unsigned char index);
+        signed char getDeathAnimation() const; // -1 means not decided
+        void setDeathAnimation(signed char index);
 
         MWWorld::TimeStamp getTimeOfDeath() const;
 
@@ -271,6 +295,15 @@ namespace MWMechanics
         /// assigned this function will return false).
 
         static void cleanup();
+
+        std::map<std::string, CorprusStats> & getCorprusSpells();
+
+        void addCorprusSpell(const std::string& sourceId, CorprusStats& stats);
+
+        void removeCorprusSpell(const std::string& sourceId);
+
+        float getSideMovementAngle() const { return mSideMovementAngle; }
+        void setSideMovementAngle(float angle) { mSideMovementAngle = angle; }
     };
 }
 

@@ -4,7 +4,6 @@
 #include <utility>
 
 #include <vector>
-#include <string>
 #include <map>
 
 #include <osg/ref_ptr>
@@ -48,9 +47,6 @@ namespace MWRender
         void enableCellPathgrid(const MWWorld::CellStore *store);
         void disableCellPathgrid(const MWWorld::CellStore *store);
 
-        // path grid meshes
-        osg::ref_ptr<osg::Geometry> createPathgridLines(const ESM::Pathgrid *pathgrid);
-        osg::ref_ptr<osg::Geometry> createPathgridPoints(const ESM::Pathgrid *pathgrid);
     public:
         Pathgrid(osg::ref_ptr<osg::Group> root);
         ~Pathgrid();

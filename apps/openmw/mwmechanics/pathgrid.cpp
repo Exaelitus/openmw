@@ -8,7 +8,7 @@
 
 namespace
 {
-    // See http://theory.stanford.edu/~amitp/GameProgramming/Heuristics.html
+    // See https://theory.stanford.edu/~amitp/GameProgramming/Heuristics.html
     //
     // One of the smallest cost in Seyda Neen is between points 77 & 78:
     // pt      x     y
@@ -49,15 +49,15 @@ namespace
 
 namespace MWMechanics
 {
-    PathgridGraph::PathgridGraph()
-        : mCell(NULL)
-        , mPathgrid(NULL)
-        , mIsExterior(0)
+    PathgridGraph::PathgridGraph(const MWWorld::CellStore *cell)
+        : mCell(nullptr)
+        , mPathgrid(nullptr)
         , mGraph(0)
         , mIsGraphConstructed(false)
         , mSCCId(0)
         , mSCCIndex(0)
     {
+        load(cell);
     }
 
     /*
@@ -105,7 +105,6 @@ namespace MWMechanics
             return true;
 
         mCell = cell->getCell();
-        mIsExterior = cell->getCell()->isExterior();
         mPathgrid = MWBase::Environment::get().getWorld()->getStore().get<ESM::Pathgrid>().search(*cell->getCell());
         if(!mPathgrid)
             return false;
@@ -128,6 +127,11 @@ namespace MWMechanics
         buildConnectedPoints();
         mIsGraphConstructed = true;
         return true;
+    }
+
+    const ESM::Pathgrid *PathgridGraph::getPathgrid() const
+    {
+        return mPathgrid;
     }
 
     // v is the pathgrid point index (some call them vertices)
@@ -214,6 +218,16 @@ namespace MWMechanics
         return (mGraph[start].componentId == mGraph[end].componentId);
     }
 
+    void PathgridGraph::getNeighbouringPoints(const int index, ESM::Pathgrid::PointList &nodes) const
+    {
+        for(int i = 0; i < static_cast<int> (mGraph[index].edges.size()); i++)
+        {
+            int neighbourIndex = mGraph[index].edges[i].index;
+            if (neighbourIndex != index)
+                nodes.push_back(mPathgrid->mPoints[neighbourIndex]);
+        }
+    }
+
     /*
      * NOTE: Based on buildPath2(), please check git history if interested
      *       Should consider using a 3rd party library version (e.g. boost)
@@ -225,7 +239,7 @@ namespace MWMechanics
      * Should be possible to make this MT safe.
      *
      * Returns path which may be empty.  path contains pathgrid points in local
-     * cell co-ordinates (indoors) or world co-ordinates (external).
+     * cell coordinates (indoors) or world coordinates (external).
      *
      * Input params:
      *   start, goal - pathgrid point indexes (for this cell)
@@ -239,12 +253,11 @@ namespace MWMechanics
      * TODO: An intersting exercise might be to cache the paths created for a
      *       start/goal pair.  To cache the results the paths need to be in
      *       pathgrid points form (currently they are converted to world
-     *       co-ordinates).  Essentially trading speed w/ memory.
+     *       coordinates).  Essentially trading speed w/ memory.
      */
-    std::list<ESM::Pathgrid::Point> PathgridGraph::aStarSearch(const int start,
-                                                               const int goal) const
+    std::deque<ESM::Pathgrid::Point> PathgridGraph::aStarSearch(const int start, const int goal) const
     {
-        std::list<ESM::Pathgrid::Point> path;
+        std::deque<ESM::Pathgrid::Point> path;
         if(!isPointConnected(start, goal))
         {
             return path; // there is no path, return an empty path
@@ -312,7 +325,7 @@ namespace MWMechanics
         if(current != goal)
             return path; // for some reason couldn't build a path
 
-        // reconstruct path to return, using local co-ordinates
+        // reconstruct path to return, using local coordinates
         while(graphParent[current] != -1)
         {
             path.push_front(mPathgrid->mPoints[current]);

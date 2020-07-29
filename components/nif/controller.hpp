@@ -2,7 +2,7 @@
   OpenMW - The completely unofficial reimplementation of Morrowind
   Copyright (C) 2008-2010  Nicolay Korslund
   Email: < korslund@gmail.com >
-  WWW: http://openmw.sourceforge.net/
+  WWW: https://openmw.org/
 
   This file (controller.h) is part of the OpenMW package.
 
@@ -17,7 +17,7 @@
 
   You should have received a copy of the GNU General Public License
   version 3 along with this program. If not, see
-  http://www.gnu.org/licenses/ .
+  https://www.gnu.org/licenses/ .
 
  */
 
@@ -72,18 +72,19 @@ public:
     int activeCount;
     std::vector<Particle> particles;
 
-    ExtraPtr affectors;
-    ExtraPtr colliders;
+    NiParticleModifierPtr affectors;
+    NiParticleModifierPtr colliders;
 
     void read(NIFStream *nif);
     void post(NIFFile *nif);
 };
-typedef NiParticleSystemController NiBSPArrayController;
+using NiBSPArrayController = NiParticleSystemController;
 
 class NiMaterialColorController : public Controller
 {
 public:
     NiPosDataPtr data;
+    unsigned int targetColor;
 
     void read(NIFStream *nif);
     void post(NIFFile *nif);
@@ -95,6 +96,29 @@ public:
     NiPosDataPtr posData;
     NiFloatDataPtr floatData;
 
+    enum Flags
+    {
+        Flag_OpenCurve      = 0x020,
+        Flag_AllowFlip      = 0x040,
+        Flag_Bank           = 0x080,
+        Flag_ConstVelocity  = 0x100,
+        Flag_Follow         = 0x200,
+        Flag_FlipFollowAxis = 0x400
+    };
+
+    int bankDir;
+    float maxBankAngle, smoothing;
+    short followAxis;
+
+    void read(NIFStream *nif);
+    void post(NIFFile *nif);
+};
+
+class NiLookAtController : public Controller
+{
+public:
+    NodePtr target;
+
     void read(NIFStream *nif);
     void post(NIFFile *nif);
 };
@@ -103,6 +127,7 @@ class NiUVController : public Controller
 {
 public:
     NiUVDataPtr data;
+    unsigned int uvSet;
 
     void read(NIFStream *nif);
     void post(NIFFile *nif);
@@ -118,6 +143,15 @@ public:
 };
 
 class NiAlphaController : public Controller
+{
+public:
+    NiFloatDataPtr data;
+
+    void read(NIFStream *nif);
+    void post(NIFFile *nif);
+};
+
+class NiRollController : public Controller
 {
 public:
     NiFloatDataPtr data;

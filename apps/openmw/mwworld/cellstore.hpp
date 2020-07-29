@@ -6,8 +6,7 @@
 #include <string>
 #include <typeinfo>
 #include <map>
-
-#include <boost/shared_ptr.hpp>
+#include <memory>
 
 #include "livecellref.hpp"
 #include "cellreflist.hpp"
@@ -33,16 +32,16 @@
 #include <components/esm/loadmisc.hpp>
 #include <components/esm/loadbody.hpp>
 
-#include "../mwmechanics/pathgrid.hpp"  // TODO: maybe belongs in mwworld
-
 #include "timestamp.hpp"
 #include "ptr.hpp"
 
 namespace ESM
 {
+    struct Cell;
     struct CellState;
     struct FogState;
     struct CellId;
+    struct RefNum;
 }
 
 namespace MWWorld
@@ -66,8 +65,8 @@ namespace MWWorld
 
             // Even though fog actually belongs to the player and not cells,
             // it makes sense to store it here since we need it once for each cell.
-            // Note this is NULL until the cell is explored to save some memory
-            boost::shared_ptr<ESM::FogState> mFogState;
+            // Note this is nullptr until the cell is explored to save some memory
+            std::shared_ptr<ESM::FogState> mFogState;
 
             const ESM::Cell *mCell;
             State mState;
@@ -111,11 +110,24 @@ namespace MWWorld
             // Merged list of ref's currently in this cell - i.e. with added refs from mMovedHere, removed refs from mMovedToAnotherCell
             std::vector<LiveCellRefBase*> mMergedRefs;
 
+            // Get the Ptr for the given ref which originated from this cell (possibly moved to another cell at this point).
+            Ptr getCurrentPtr(MWWorld::LiveCellRefBase* ref);
+
             /// Moves object from the given cell to this cell.
             void moveFrom(const MWWorld::Ptr& object, MWWorld::CellStore* from);
 
             /// Repopulate mMergedRefs.
             void updateMergedRefs();
+
+            // (item, max charge)
+            typedef std::vector<std::pair<LiveCellRefBase*, float> > TRechargingItems;
+            TRechargingItems mRechargingItems;
+
+            bool mRechargingItemsUpToDate;
+
+            void updateRechargingItems();
+            void rechargeItems(float duration);
+            void checkItem(Ptr ptr);
 
             // helper function for forEachInternal
             template<class Visitor, class List>
@@ -182,6 +194,9 @@ namespace MWWorld
             /// @return updated MWWorld::Ptr with the new CellStore pointer set.
             MWWorld::Ptr moveTo(const MWWorld::Ptr& object, MWWorld::CellStore* cellToMoveTo);
 
+            void rest(double hours);
+            void recharge(float duration);
+
             /// Make a copy of the given object and insert it into this cell.
             /// @note If you get a linker error here, this means the given type can not be inserted into a cell.
             /// The supported types are defined at the bottom of this file.
@@ -228,7 +243,14 @@ namespace MWWorld
             Ptr searchViaActorId (int id);
             ///< Will return an empty Ptr if cell is not loaded.
 
+            Ptr searchViaRefNum (const ESM::RefNum& refNum);
+            ///< Will return an empty Ptr if cell is not loaded. Does not check references in
+            /// containers.
+            /// @note Triggers CellStore hasState flag.
+
             float getWaterLevel() const;
+
+            bool movedHere(const MWWorld::Ptr& ptr) const;
 
             void setWaterLevel (float level);
 
@@ -237,7 +259,7 @@ namespace MWWorld
 
             ESM::FogState* getFog () const;
 
-            int count() const;
+            std::size_t count() const;
             ///< Return total number of references, including deleted ones.
 
             void load ();
@@ -253,10 +275,13 @@ namespace MWWorld
             /// \attention This function also lists deleted (count 0) objects!
             /// \return Iteration completed?
             template<class Visitor>
-            bool forEach (Visitor& visitor)
+            bool forEach (Visitor&& visitor)
             {
                 if (mState != State_Loaded)
                     return false;
+
+                if (mMergedRefs.empty())
+                    return true;
 
                 mHasState = true;
 
@@ -277,7 +302,7 @@ namespace MWWorld
             /// \attention This function also lists deleted (count 0) objects!
             /// \return Iteration completed?
             template<class Visitor>
-            bool forEachConst (Visitor& visitor) const
+            bool forEachConst (Visitor&& visitor) const
             {
                 if (mState != State_Loaded)
                     return false;
@@ -304,6 +329,9 @@ namespace MWWorld
             {
                 if (mState != State_Loaded)
                     return false;
+
+                if (mMergedRefs.empty())
+                    return true;
 
                 mHasState = true;
 
@@ -358,8 +386,9 @@ namespace MWWorld
             struct GetCellStoreCallback
             {
             public:
-                ///@note must return NULL if the cell is not found
+                ///@note must return nullptr if the cell is not found
                 virtual CellStore* getCellStore(const ESM::CellId& cellId) = 0;
+                virtual ~GetCellStoreCallback() = default;
             };
 
             /// @param callback to use for retrieving of additional CellStore objects by ID (required for resolving moved references)
@@ -368,10 +397,6 @@ namespace MWWorld
             void respawn ();
             ///< Check mLastRespawn and respawn references if necessary. This is a no-op if the cell is not loaded.
 
-            bool isPointConnected(const int start, const int end) const;
-
-            std::list<ESM::Pathgrid::Point> aStarSearch(const int start, const int end) const;
-
         private:
 
             /// Run through references and store IDs
@@ -379,12 +404,10 @@ namespace MWWorld
 
             void loadRefs();
 
-            void loadRef (ESM::CellRef& ref, bool deleted);
+            void loadRef (ESM::CellRef& ref, bool deleted, std::map<ESM::RefNum, std::string>& refNumToID);
             ///< Make case-adjustments to \a ref and insert it into the respective container.
             ///
             /// Invalid \a ref objects are silently dropped.
-
-            MWMechanics::PathgridGraph mPathgridGraph;
     };
 
     template<>

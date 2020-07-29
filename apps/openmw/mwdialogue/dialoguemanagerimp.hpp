@@ -5,9 +5,11 @@
 
 #include <map>
 #include <set>
+#include <unordered_map>
 
 #include <components/compiler/streamerrorhandler.hpp>
 #include <components/translation/translation.hpp>
+#include <components/misc/stringops.hpp>
 
 #include "../mwworld/ptr.hpp"
 
@@ -22,18 +24,17 @@ namespace MWDialogue
 {
     class DialogueManager : public MWBase::DialogueManager
     {
-            std::map<std::string, ESM::Dialogue> mDialogueMap;
-            std::set<std::string> mKnownTopics;// Those are the topics the player knows.
+            std::set<std::string, Misc::StringUtils::CiComp> mKnownTopics;// Those are the topics the player knows.
 
             // Modified faction reactions. <Faction1, <Faction2, Difference> >
             typedef std::map<std::string, std::map<std::string, int> > ModFactionReactionMap;
             ModFactionReactionMap mChangedFactionReaction;
 
-            std::set<std::string> mActorKnownTopics;
+            std::set<std::string, Misc::StringUtils::CiComp> mActorKnownTopics;
+            std::unordered_map<std::string, int> mActorKnownTopicsFlag;
 
             Translation::Storage& mTranslationDataStorage;
             MWScript::CompilerContext mCompilerContext;
-            std::ostream mErrorStream;
             Compiler::StreamErrorHandler mErrorHandler;
 
             MWWorld::Ptr mActor;
@@ -42,50 +43,63 @@ namespace MWDialogue
             int mChoice;
             std::string mLastTopic; // last topic ID, lowercase
             bool mIsInChoice;
+            bool mGoodbye;
+
+            std::vector<std::pair<std::string, int> > mChoices;
 
             float mTemporaryDispositionChange;
             float mPermanentDispositionChange;
 
             void parseText (const std::string& text);
 
-            void updateTopics();
+            void updateActorKnownTopics();
             void updateGlobals();
 
-            bool compile (const std::string& cmd,std::vector<Interpreter::Type_Code>& code);
-            void executeScript (const std::string& script);
+            bool compile (const std::string& cmd, std::vector<Interpreter::Type_Code>& code, const MWWorld::Ptr& actor);
+            void executeScript (const std::string& script, const MWWorld::Ptr& actor);
 
-            void executeTopic (const std::string& topic);
+            void executeTopic (const std::string& topic, ResponseCallback* callback);
+
+            const ESM::Dialogue* searchDialogue(const std::string& id);
 
         public:
 
-            DialogueManager (const Compiler::Extensions& extensions, bool scriptVerbose, Translation::Storage& translationDataStorage);
+            DialogueManager (const Compiler::Extensions& extensions, Translation::Storage& translationDataStorage);
 
             virtual void clear();
 
             virtual bool isInChoice() const;
 
-            virtual void startDialogue (const MWWorld::Ptr& actor);
+            virtual bool startDialogue (const MWWorld::Ptr& actor, ResponseCallback* callback);
+
+            std::list<std::string> getAvailableTopics();
+            int getTopicFlag(const std::string& topicId) final;
+
+            bool inJournal (const std::string& topicId, const std::string& infoId) final;
 
             virtual void addTopic (const std::string& topic);
 
-            virtual void askQuestion (const std::string& question,int choice);
+            virtual void addChoice (const std::string& text,int choice);
+            const std::vector<std::pair<std::string, int> >& getChoices();
+
+            virtual bool isGoodbye();
 
             virtual void goodbye();
 
-            virtual bool checkServiceRefused ();
+            virtual bool checkServiceRefused (ResponseCallback* callback);
 
-            virtual void say(const MWWorld::Ptr &actor, const std::string &topic) const;
+            virtual void say(const MWWorld::Ptr &actor, const std::string &topic);
 
             //calbacks for the GUI
-            virtual void keywordSelected (const std::string& keyword);
+            virtual void keywordSelected (const std::string& keyword, ResponseCallback* callback);
             virtual void goodbyeSelected();
-            virtual void questionAnswered (int answer);
+            virtual void questionAnswered (int answer, ResponseCallback* callback);
 
-            virtual void persuade (int type);
+            virtual void persuade (int type, ResponseCallback* callback);
             virtual int getTemporaryDispositionChange () const;
 
-            /// @note This change is temporary and gets discarded when dialogue ends.
-            virtual void applyDispositionChange (int delta);
+            /// @note Controlled by an option, gets discarded when dialogue ends by default
+            virtual void applyBarterDispositionChange (int delta);
 
             virtual int countSavedGameRecords() const;
 

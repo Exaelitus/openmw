@@ -39,12 +39,7 @@ namespace MWGui
 
             Console(int w, int h, bool consoleOnlyScripts);
 
-            virtual void open();
-            virtual void close();
-
-            virtual void exit();
-
-            void setFont(const std::string &fntName);
+            virtual void onOpen();
 
             void onResChange(int width, int height);
 
@@ -62,6 +57,10 @@ namespace MWGui
             void execute (const std::string& command);
 
             void executeFile (const std::string& path);
+
+            void updateSelectedObjectPtr(const MWWorld::Ptr& currentPtr, const MWWorld::Ptr& newPtr);
+
+            void clear();
 
             virtual void resetReference ();
 

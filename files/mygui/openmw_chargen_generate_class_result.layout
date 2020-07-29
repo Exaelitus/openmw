@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <MyGUI type="Layout">
-    <Widget type="VBox" skin="MW_Dialog" layer="Windows" position="0 0 289 256" name="_Main">
+    <Widget type="VBox" skin="MW_Dialog" layer="Windows" position="0 0 289 256" align="Center" name="_Main">
         <Property key="AutoResize" value="true"/>
-        <Property key="Padding" value="12"/>
+        <Property key="Padding" value="8"/>
         <Property key="Spacing" value="8"/>
 
         <!-- Class image -->
@@ -24,7 +24,7 @@
         </Widget>
 
         <!-- Dialog buttons -->
-        <Widget type="HBox" position="0 216 273 24">
+        <Widget type="HBox" position="0 216 273 28">
             <Widget type="AutoSizedButton" skin="MW_Button" name="BackButton">
                 <Property key="Caption" value="#{sBack}"/>
             </Widget>

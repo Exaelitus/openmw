@@ -2,7 +2,7 @@
 
 #include <components/compiler/extensions.hpp>
 #include <components/compiler/opcodes.hpp>
-
+#include <components/debug/debuglog.hpp>
 #include <components/interpreter/interpreter.hpp>
 #include <components/interpreter/runtime.hpp>
 #include <components/interpreter/opcodes.hpp>
@@ -11,6 +11,7 @@
 #include "../mwbase/dialoguemanager.hpp"
 #include "../mwbase/journal.hpp"
 #include "../mwbase/world.hpp"
+#include "../mwbase/windowmanager.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwmechanics/npcstats.hpp"
@@ -116,7 +117,7 @@ namespace MWScript
                             runtime.pop();
                             arg0 = arg0 -1;
                         }
-                        dialogue->askQuestion(question,choice);
+                        dialogue->addChoice(question,choice);
                     }
                 }
         };
@@ -133,7 +134,15 @@ namespace MWScript
                     if (!ptr.getRefData().isEnabled())
                         return;
 
-                    MWBase::Environment::get().getDialogueManager()->startDialogue (ptr);
+                    if (!ptr.getClass().isActor())
+                    {
+                        const std::string error = "Warning: \"forcegreeting\" command works only for actors.";
+                        runtime.getContext().report(error);
+                        Log(Debug::Warning) << error;
+                        return;
+                    }
+
+                    MWBase::Environment::get().getWindowManager()->pushGuiMode(MWGui::GM_Dialogue, ptr);
                 }
         };
 
@@ -201,7 +210,7 @@ namespace MWScript
 
                     MWWorld::Ptr player = MWBase::Environment::get().getWorld ()->getPlayerPtr();
 
-                    player.getClass().getNpcStats (player).isInFaction(ptr.getClass().getPrimaryFaction(ptr));
+                    runtime.push(player.getClass().getNpcStats (player).isInFaction(ptr.getClass().getPrimaryFaction(ptr)));
                 }
         };
 
@@ -276,6 +285,7 @@ namespace MWScript
         void installOpcodes (Interpreter::Interpreter& interpreter)
         {
             interpreter.installSegment5 (Compiler::Dialogue::opcodeJournal, new OpJournal<ImplicitRef>);
+            interpreter.installSegment5 (Compiler::Dialogue::opcodeJournalExplicit, new OpJournal<ExplicitRef>);
             interpreter.installSegment5 (Compiler::Dialogue::opcodeSetJournalIndex, new OpSetJournalIndex);
             interpreter.installSegment5 (Compiler::Dialogue::opcodeGetJournalIndex, new OpGetJournalIndex);
             interpreter.installSegment5 (Compiler::Dialogue::opcodeAddTopic, new OpAddTopic);

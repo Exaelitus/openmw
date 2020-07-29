@@ -39,6 +39,7 @@ namespace CSVWorld
             bool mHasPosition;
             int mRow;
             int mColumn;
+            QString mStatusMessage;
 
         private:
 
@@ -73,6 +74,8 @@ namespace CSVWorld
             ///
             /// \note The BotomBox does not partake in the deletion of records.
 
+            void setStatusMessage (const QString& message);
+
         signals:
 
             void requestFocus (const std::string& id);
@@ -102,6 +105,7 @@ namespace CSVWorld
             void createRequest();
             void cloneRequest(const std::string& id,
                               const CSMWorld::UniversalId::Type type);
+            void touchRequest(const std::vector<CSMWorld::UniversalId>&);
 
             void extendedDeleteConfigRequest(const std::vector<std::string> &selectedIds);
             void extendedRevertConfigRequest(const std::vector<std::string> &selectedIds);

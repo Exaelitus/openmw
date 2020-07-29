@@ -1,6 +1,7 @@
 #ifndef OPENMW_MWWORLD_ESMSTORE_H
 #define OPENMW_MWWORLD_ESMSTORE_H
 
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 
@@ -10,6 +11,11 @@
 namespace Loading
 {
     class Listener;
+}
+
+namespace MWMechanics
+{
+    class SpellList;
 }
 
 namespace MWWorld
@@ -68,12 +74,22 @@ namespace MWWorld
         // Lookup of all IDs. Makes looking up references faster. Just
         // maps the id name to the record type.
         std::map<std::string, int> mIds;
+        std::map<std::string, int> mStaticIds;
+
+        std::map<std::string, int> mRefCount;
+
         std::map<int, StoreBase *> mStores;
 
         ESM::NPC mPlayerTemplate;
 
         unsigned int mDynamicCount;
 
+        mutable std::map<std::string, std::weak_ptr<MWMechanics::SpellList> > mSpellListCache;
+
+        /// Validate entries in store after setup
+        void validate();
+
+        void countRecords();
     public:
         /// \todo replace with SharedIterator<StoreBase>
         typedef std::map<int, StoreBase *>::const_iterator iterator;
@@ -92,6 +108,14 @@ namespace MWWorld
         {
             std::map<std::string, int>::const_iterator it = mIds.find(id);
             if (it == mIds.end()) {
+                return 0;
+            }
+            return it->second;
+        }
+        int findStatic(const std::string &id) const
+        {
+            std::map<std::string, int>::const_iterator it = mStaticIds.find(id);
+            if (it == mStaticIds.end()) {
                 return 0;
             }
             return it->second;
@@ -167,19 +191,19 @@ namespace MWWorld
 
         /// Insert a custom record (i.e. with a generated ID that will not clash will pre-existing records)
         template <class T>
-        const T *insert(const T &x) {
-            std::ostringstream id;
-            id << "$dynamic" << mDynamicCount++;
+        const T *insert(const T &x)
+        {
+            const std::string id = "$dynamic" + std::to_string(mDynamicCount++);
 
             Store<T> &store = const_cast<Store<T> &>(get<T>());
-            if (store.search(id.str()) != 0) {
-                std::ostringstream msg;
-                msg << "Try to override existing record '" << id.str() << "'";
-                throw std::runtime_error(msg.str());
+            if (store.search(id) != 0)
+            {
+                const std::string msg = "Try to override existing record '" + id + "'";
+                throw std::runtime_error(msg);
             }
             T record = x;
 
-            record.mId = id.str();
+            record.mId = id;
 
             T *ptr = store.insert(record);
             for (iterator it = mStores.begin(); it != mStores.end(); ++it) {
@@ -205,15 +229,15 @@ namespace MWWorld
         }
 
         template <class T>
-        const T *insertStatic(const T &x) {
-            std::ostringstream id;
-            id << "$dynamic" << mDynamicCount++;
+        const T *insertStatic(const T &x)
+        {
+            const std::string id = "$dynamic" + std::to_string(mDynamicCount++);
 
             Store<T> &store = const_cast<Store<T> &>(get<T>());
-            if (store.search(id.str()) != 0) {
-                std::ostringstream msg;
-                msg << "Try to override existing record '" << id.str() << "'";
-                throw std::runtime_error(msg.str());
+            if (store.search(id) != 0)
+            {
+                const std::string msg = "Try to override existing record '" + id + "'";
+                throw std::runtime_error(msg);
             }
             T record = x;
 
@@ -228,7 +252,7 @@ namespace MWWorld
 
         // This method must be called once, after loading all master/plugin files. This can only be done
         //  from the outside, so it must be public.
-        void setUp();
+        void setUp(bool validateRecords = false);
 
         int countSavedGameRecords() const;
 
@@ -236,6 +260,13 @@ namespace MWWorld
 
         bool readRecord (ESM::ESMReader& reader, uint32_t type);
         ///< \return Known type?
+
+        // To be called when we are done with dynamic record loading
+        void checkPlayer();
+
+        int getRefCount(const std::string& id) const;
+
+        std::pair<std::shared_ptr<MWMechanics::SpellList>, bool> getSpellList(const std::string& id) const;
     };
 
     template <>
@@ -244,20 +275,22 @@ namespace MWWorld
     }
 
     template <>
-    inline const ESM::NPC *ESMStore::insert<ESM::NPC>(const ESM::NPC &npc) {
-        std::ostringstream id;
-        id << "$dynamic" << mDynamicCount++;
+    inline const ESM::NPC *ESMStore::insert<ESM::NPC>(const ESM::NPC &npc)
+    {
+        const std::string id = "$dynamic" + std::to_string(mDynamicCount++);
 
-        if (Misc::StringUtils::ciEqual(npc.mId, "player")) {
+        if (Misc::StringUtils::ciEqual(npc.mId, "player"))
+        {
             return mNpcs.insert(npc);
-        } else if (mNpcs.search(id.str()) != 0) {
-            std::ostringstream msg;
-            msg << "Try to override existing record '" << id.str() << "'";
-            throw std::runtime_error(msg.str());
+        }
+        else if (mNpcs.search(id) != 0)
+        {
+            const std::string msg = "Try to override existing record '" + id + "'";
+            throw std::runtime_error(msg);
         }
         ESM::NPC record = npc;
 
-        record.mId = id.str();
+        record.mId = id;
 
         ESM::NPC *ptr = mNpcs.insert(record);
         mIds[ptr->mId] = ESM::REC_NPC_;

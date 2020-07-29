@@ -4,6 +4,7 @@
 #include <string>
 #include <map>
 #include <memory>
+#include <mutex>
 
 #include <osg/ref_ptr>
 #include <osg/Node>
@@ -15,6 +16,7 @@ namespace Resource
 {
     class ImageManager;
     class NifFileManager;
+    class SharedStateManager;
 }
 
 namespace osgUtil
@@ -22,9 +24,15 @@ namespace osgUtil
     class IncrementalCompileOperation;
 }
 
+namespace osgDB
+{
+    class SharedStateManager;
+}
+
 namespace Shader
 {
     class ShaderManager;
+    class ShaderVisitor;
 }
 
 namespace Resource
@@ -49,13 +57,8 @@ namespace Resource
         void setForceShaders(bool force);
         bool getForceShaders() const;
 
-        /// @see ShaderVisitor::setClampLighting
         void setClampLighting(bool clamp);
         bool getClampLighting() const;
-
-        /// @see ShaderVisitor::setForcePerPixelLighting
-        void setForcePerPixelLighting(bool force);
-        bool getForcePerPixelLighting() const;
 
         /// @see ShaderVisitor::setAutoUseNormalMaps
         void setAutoUseNormalMaps(bool use);
@@ -72,17 +75,24 @@ namespace Resource
 
         void setShaderPath(const std::string& path);
 
+        /// Check if a given scene is loaded and if so, update its usage timestamp to prevent it from being unloaded
+        bool checkLoaded(const std::string& name, double referenceTime);
+
         /// Get a read-only copy of this scene "template"
         /// @note If the given filename does not exist or fails to load, an error marker mesh will be used instead.
         ///  If even the error marker mesh can not be found, an exception is thrown.
         /// @note Thread safe.
-        osg::ref_ptr<const osg::Node> getTemplate(const std::string& name);
+        osg::ref_ptr<const osg::Node> getTemplate(const std::string& name, bool compile=true);
 
         /// Create an instance of the given scene template and cache it for later use, so that future calls to getInstance() can simply
         /// return this cached object instead of creating a new one.
         /// @note The returned ref_ptr may be kept around by the caller to ensure that the object stays in cache for as long as needed.
         /// @note Thread safe.
         osg::ref_ptr<osg::Node> cacheInstance(const std::string& name);
+
+        osg::ref_ptr<osg::Node> createInstance(const std::string& name);
+
+        osg::ref_ptr<osg::Node> createInstance(const osg::Node* base);
 
         /// Get an instance of the given scene template
         /// @see getTemplate
@@ -103,13 +113,12 @@ namespace Resource
 
         /// Manually release created OpenGL objects for the given graphics context. This may be required
         /// in cases where multiple contexts are used over the lifetime of the application.
-        void releaseGLObjects(osg::State* state);
+        void releaseGLObjects(osg::State* state) override;
 
         /// Set up an IncrementalCompileOperation for background compiling of loaded scenes.
         void setIncrementalCompileOperation(osgUtil::IncrementalCompileOperation* ico);
 
-        /// @note SceneManager::attachTo calls this method automatically, only needs to be called by users if manually attaching
-        void notifyAttached(osg::Node* node) const;
+        osgUtil::IncrementalCompileOperation* getIncrementalCompileOperation();
 
         Resource::ImageManager* getImageManager();
 
@@ -129,16 +138,19 @@ namespace Resource
         void setUnRefImageDataAfterApply(bool unref);
 
         /// @see ResourceManager::updateCache
-        virtual void updateCache(double referenceTime);
+        void updateCache(double referenceTime) override;
+
+        void clearCache() override;
+
+        void reportStats(unsigned int frameNumber, osg::Stats* stats) const override;
 
     private:
 
-        osg::ref_ptr<osg::Node> createInstance(const std::string& name);
+        Shader::ShaderVisitor* createShaderVisitor();
 
-        std::auto_ptr<Shader::ShaderManager> mShaderManager;
+        std::unique_ptr<Shader::ShaderManager> mShaderManager;
         bool mForceShaders;
         bool mClampLighting;
-        bool mForcePerPixelLighting;
         bool mAutoUseNormalMaps;
         std::string mNormalMapPattern;
         std::string mNormalHeightMapPattern;
@@ -147,7 +159,8 @@ namespace Resource
 
         osg::ref_ptr<MultiObjectCache> mInstanceCache;
 
-        OpenThreads::Mutex mSharedStateMutex;
+        osg::ref_ptr<Resource::SharedStateManager> mSharedStateManager;
+        mutable std::mutex mSharedStateMutex;
 
         Resource::ImageManager* mImageManager;
         Resource::NifFileManager* mNifFileManager;

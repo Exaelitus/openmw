@@ -15,6 +15,7 @@
 
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/combat.hpp"
+#include "../mwmechanics/weapontype.hpp"
 
 #include "animation.hpp"
 #include "rotatecontroller.hpp"
@@ -33,15 +34,20 @@ float WeaponAnimationTime::getValue(osg::NodeVisitor*)
     return current - mStartTime;
 }
 
-void WeaponAnimationTime::setGroup(const std::string &group)
+void WeaponAnimationTime::setGroup(const std::string &group, bool relativeTime)
 {
     mWeaponGroup = group;
-    mStartTime = mAnimation->getStartTime(mWeaponGroup);
+    mRelativeTime = relativeTime;
+
+    if (mRelativeTime)
+        mStartTime = mAnimation->getStartTime(mWeaponGroup);
+    else
+        mStartTime = 0;
 }
 
 void WeaponAnimationTime::updateStartTime()
 {
-    setGroup(mWeaponGroup);
+    setGroup(mWeaponGroup, mRelativeTime);
 }
 
 WeaponAnimation::WeaponAnimation()
@@ -56,14 +62,16 @@ WeaponAnimation::~WeaponAnimation()
 
 void WeaponAnimation::attachArrow(MWWorld::Ptr actor)
 {
-    MWWorld::InventoryStore& inv = actor.getClass().getInventoryStore(actor);
-    MWWorld::ContainerStoreIterator weaponSlot = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+    const MWWorld::InventoryStore& inv = actor.getClass().getInventoryStore(actor);
+    MWWorld::ConstContainerStoreIterator weaponSlot = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
     if (weaponSlot == inv.end())
         return;
     if (weaponSlot->getTypeName() != typeid(ESM::Weapon).name())
         return;
-    int weaponType = weaponSlot->get<ESM::Weapon>()->mBase->mData.mType;
-    if (weaponType == ESM::Weapon::MarksmanThrown)
+
+    int type = weaponSlot->get<ESM::Weapon>()->mBase->mData.mType;
+    ESM::WeaponType::Class weapclass = MWMechanics::getWeaponType(type)->mWeaponClass;
+    if (weapclass == ESM::WeaponType::Thrown)
     {
         std::string soundid = weaponSlot->getClass().getUpSoundId(*weaponSlot);
         if(!soundid.empty())
@@ -73,13 +81,13 @@ void WeaponAnimation::attachArrow(MWWorld::Ptr actor)
         }
         showWeapon(true);
     }
-    else if (weaponType == ESM::Weapon::MarksmanBow || weaponType == ESM::Weapon::MarksmanCrossbow)
+    else if (weapclass == ESM::WeaponType::Ranged)
     {
         osg::Group* parent = getArrowBone();
         if (!parent)
             return;
 
-        MWWorld::ContainerStoreIterator ammo = inv.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
+        MWWorld::ConstContainerStoreIterator ammo = inv.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
         if (ammo == inv.end())
             return;
         std::string model = ammo->getClass().getModel(*ammo);
@@ -108,7 +116,7 @@ void WeaponAnimation::releaseArrow(MWWorld::Ptr actor, float attackStrength)
 
     MWMechanics::applyFatigueLoss(actor, *weapon, attackStrength);
 
-    if (weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::MarksmanThrown)
+    if (MWMechanics::getWeaponType(weapon->get<ESM::Weapon>()->mBase->mData.mType)->mWeaponClass == ESM::WeaponType::Thrown)
     {
         // Thrown weapons get detached now
         osg::Node* weaponNode = getWeaponNode();
@@ -119,11 +127,12 @@ void WeaponAnimation::releaseArrow(MWWorld::Ptr actor, float attackStrength)
             return;
         osg::Vec3f launchPos = osg::computeLocalToWorld(nodepaths[0]).getTrans();
 
-        float fThrownWeaponMinSpeed = gmst.find("fThrownWeaponMinSpeed")->getFloat();
-        float fThrownWeaponMaxSpeed = gmst.find("fThrownWeaponMaxSpeed")->getFloat();
+        float fThrownWeaponMinSpeed = gmst.find("fThrownWeaponMinSpeed")->mValue.getFloat();
+        float fThrownWeaponMaxSpeed = gmst.find("fThrownWeaponMaxSpeed")->mValue.getFloat();
         float speed = fThrownWeaponMinSpeed + (fThrownWeaponMaxSpeed - fThrownWeaponMinSpeed) * attackStrength;
 
-        MWBase::Environment::get().getWorld()->launchProjectile(actor, *weapon, launchPos, orient, *weapon, speed, attackStrength);
+        MWWorld::Ptr weaponPtr = *weapon;
+        MWBase::Environment::get().getWorld()->launchProjectile(actor, weaponPtr, launchPos, orient, weaponPtr, speed, attackStrength);
 
         showWeapon(false);
 
@@ -145,23 +154,25 @@ void WeaponAnimation::releaseArrow(MWWorld::Ptr actor, float attackStrength)
             return;
         osg::Vec3f launchPos = osg::computeLocalToWorld(nodepaths[0]).getTrans();
 
-        float fProjectileMinSpeed = gmst.find("fProjectileMinSpeed")->getFloat();
-        float fProjectileMaxSpeed = gmst.find("fProjectileMaxSpeed")->getFloat();
+        float fProjectileMinSpeed = gmst.find("fProjectileMinSpeed")->mValue.getFloat();
+        float fProjectileMaxSpeed = gmst.find("fProjectileMaxSpeed")->mValue.getFloat();
         float speed = fProjectileMinSpeed + (fProjectileMaxSpeed - fProjectileMinSpeed) * attackStrength;
 
-        MWBase::Environment::get().getWorld()->launchProjectile(actor, *ammo, launchPos, orient, *weapon, speed, attackStrength);
+        MWWorld::Ptr weaponPtr = *weapon;
+        MWWorld::Ptr ammoPtr = *ammo;
+        MWBase::Environment::get().getWorld()->launchProjectile(actor, ammoPtr, launchPos, orient, weaponPtr, speed, attackStrength);
 
-        inv.remove(*ammo, 1, actor);
+        inv.remove(ammoPtr, 1, actor);
         mAmmunition.reset();
     }
 }
 
 void WeaponAnimation::addControllers(const std::map<std::string, osg::ref_ptr<osg::MatrixTransform> >& nodes,
-                                     std::multimap<osg::ref_ptr<osg::Node>, osg::ref_ptr<osg::NodeCallback> > &map, osg::Node* objectRoot)
+    std::vector<std::pair<osg::ref_ptr<osg::Node>, osg::ref_ptr<osg::NodeCallback>>> &map, osg::Node* objectRoot)
 {
     for (int i=0; i<2; ++i)
     {
-        mSpineControllers[i] = NULL;
+        mSpineControllers[i] = nullptr;
 
         std::map<std::string, osg::ref_ptr<osg::MatrixTransform> >::const_iterator found = nodes.find(i == 0 ? "bip01 spine1" : "bip01 spine2");
         if (found != nodes.end())
@@ -169,7 +180,7 @@ void WeaponAnimation::addControllers(const std::map<std::string, osg::ref_ptr<os
             osg::Node* node = found->second;
             mSpineControllers[i] = new RotateController(objectRoot);
             node->addUpdateCallback(mSpineControllers[i]);
-            map.insert(std::make_pair(node, mSpineControllers[i]));
+            map.emplace_back(node, mSpineControllers[i]);
         }
     }
 }
@@ -177,7 +188,7 @@ void WeaponAnimation::addControllers(const std::map<std::string, osg::ref_ptr<os
 void WeaponAnimation::deleteControllers()
 {
     for (int i=0; i<2; ++i)
-        mSpineControllers[i] = NULL;
+        mSpineControllers[i] = nullptr;
 }
 
 void WeaponAnimation::configureControllers(float characterPitchRadians)

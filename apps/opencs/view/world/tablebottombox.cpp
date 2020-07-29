@@ -28,6 +28,12 @@ void CSVWorld::TableBottomBox::updateStatus()
 {
     if (mShowStatusBar)
     {
+        if (!mStatusMessage.isEmpty())
+        {
+            mStatus->setText (mStatusMessage);
+            return;
+        }
+
         static const char *sLabels[4] = { "record", "deleted", "touched", "selected" };
         static const char *sLabelsPlural[4] = { "records", "deleted", "touched", "selected" };
 
@@ -72,9 +78,9 @@ void CSVWorld::TableBottomBox::extendedConfigRequest(CSVWorld::ExtendedCommandCo
     mExtendedConfigurator->setFocus();
 }
 
-CSVWorld::TableBottomBox::TableBottomBox (const CreatorFactoryBase& creatorFactory, 
-                                          CSMDoc::Document& document, 
-                                          const CSMWorld::UniversalId& id, 
+CSVWorld::TableBottomBox::TableBottomBox (const CreatorFactoryBase& creatorFactory,
+                                          CSMDoc::Document& document,
+                                          const CSMWorld::UniversalId& id,
                                           QWidget *parent)
 : QWidget (parent), mShowStatusBar (false), mEditMode(EditMode_None), mHasPosition(false), mRow(0), mColumn(0)
 {
@@ -178,10 +184,17 @@ void CSVWorld::TableBottomBox::currentWidgetChanged(int /*index*/)
     updateSize();
 }
 
+void CSVWorld::TableBottomBox::setStatusMessage (const QString& message)
+{
+    mStatusMessage = message;
+    updateStatus();
+}
+
 void CSVWorld::TableBottomBox::selectionSizeChanged (int size)
 {
     if (mStatusCount[3]!=size)
     {
+        mStatusMessage = "";
         mStatusCount[3] = size;
         updateStatus();
     }
@@ -210,7 +223,10 @@ void CSVWorld::TableBottomBox::tableSizeChanged (int size, int deleted, int modi
     }
 
     if (changed)
+    {
+        mStatusMessage = "";
         updateStatus();
+    }
 }
 
 void CSVWorld::TableBottomBox::positionChanged (int row, int column)
@@ -247,6 +263,11 @@ void CSVWorld::TableBottomBox::cloneRequest(const std::string& id,
     setVisible (true);
     mEditMode = EditMode_Creation;
     mCreator->focus();
+}
+
+void CSVWorld::TableBottomBox::touchRequest(const std::vector<CSMWorld::UniversalId>& ids)
+{
+    mCreator->touch(ids);
 }
 
 void CSVWorld::TableBottomBox::extendedDeleteConfigRequest(const std::vector<std::string> &selectedIds)

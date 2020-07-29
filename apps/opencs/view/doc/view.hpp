@@ -66,6 +66,9 @@ namespace CSVDoc
 
             void closeEvent (QCloseEvent *event);
 
+            QAction* createMenuEntry(CSMWorld::UniversalId::Type type, QMenu* menu, const char* shortcutName);
+            QAction* createMenuEntry(const std::string& title, const std::string& iconName, QMenu* menu, const char* shortcutName);
+
             void setupFileMenu();
 
             void setupEditMenu();
@@ -82,7 +85,11 @@ namespace CSVDoc
 
             void setupDebugMenu();
 
+            void setupHelpMenu();
+
             void setupUi();
+
+            void setupShortcut(const char* name, QAction* action);
 
             void updateActions();
 
@@ -133,6 +140,8 @@ namespace CSVDoc
 
             void mergeDocument (CSMDoc::Document *document);
 
+            void requestFocus (const std::string& id);
+
         public slots:
 
             void addSubView (const CSMWorld::UniversalId& id, const std::string& hint = "");
@@ -144,17 +153,29 @@ namespace CSVDoc
             void updateTitle();
 
             // called when subviews are added or removed
-            void updateSubViewIndices (SubView *view = NULL);
+            void updateSubViewIndices (SubView *view = nullptr);
 
         private slots:
 
             void settingChanged (const CSMPrefs::Setting *setting);
+
+            void undoActionChanged();
+
+            void redoActionChanged();
 
             void newView();
 
             void save();
 
             void exit();
+
+            static void openHelp();
+
+            static void tutorial();
+
+            void infoAbout();
+
+            void infoAboutQt();
 
             void verify();
 
@@ -222,6 +243,10 @@ namespace CSVDoc
 
             void addRunLogSubView();
 
+            void addLandsSubView();
+
+            void addLandTexturesSubView();
+
             void addPathgridSubView();
 
             void addStartScriptsSubView();
@@ -243,6 +268,8 @@ namespace CSVDoc
             void moveScrollBarToEnd(int min, int max);
 
             void merge();
+
+            void onRequestFocus (const std::string& id);
     };
 }
 

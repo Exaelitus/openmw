@@ -1,11 +1,11 @@
 #ifndef OPENCS_VIEW_OBJECT_H
 #define OPENCS_VIEW_OBJECT_H
 
+#include <memory>
 #include <string>
 
-#include <boost/shared_ptr.hpp>
-
 #include <osg/ref_ptr>
+#include <osg/Geometry>
 #include <osg/Referenced>
 
 #include <components/esm/defs.hpp>
@@ -42,6 +42,7 @@ namespace CSMWorld
 
 namespace CSVRender
 {
+    class Actor;
     class Object;
 
     // An object to attach as user data to the osg::Node, allows us to get an Object back from a Node when we are doing a ray query
@@ -78,6 +79,11 @@ namespace CSVRender
 
         private:
 
+            static const float MarkerShaftWidth;
+            static const float MarkerShaftBaseLength;
+            static const float MarkerHeadWidth;
+            static const float MarkerHeadLength;
+
             CSMWorld::Data& mData;
             std::string mReferenceId;
             std::string mReferenceableId;
@@ -89,10 +95,12 @@ namespace CSVRender
             Resource::ResourceSystem* mResourceSystem;
             bool mForceBaseToZero;
             ESM::Position mPositionOverride;
-            int mScaleOverride;
+            float mScaleOverride;
             int mOverrideFlags;
             osg::ref_ptr<osg::Node> mMarker[3];
             int mSubMode;
+            float mMarkerTransparency;
+            std::unique_ptr<Actor> mActor;
 
             /// Not implemented
             Object (const Object&);
@@ -115,7 +123,11 @@ namespace CSVRender
 
             void updateMarker();
 
-            osg::ref_ptr<osg::Node> makeMarker (int axis);
+            osg::ref_ptr<osg::Node> makeMoveOrScaleMarker (int axis);
+            osg::ref_ptr<osg::Node> makeRotateMarker (int axis);
+
+            /// Sets up a stateset with properties common to all marker types.
+            void setupCommonMarkerState(osg::ref_ptr<osg::Geometry> geometry);
 
             osg::Vec3f getMarkerPosition (float x, float y, float z, int axis);
 
@@ -134,6 +146,12 @@ namespace CSVRender
 
             bool getSelected() const;
 
+            /// Get object node with GUI graphics
+            osg::ref_ptr<osg::Group> getRootNode();
+
+            /// Get object node without GUI graphics
+            osg::ref_ptr<osg::Group> getBaseNode();
+
             /// \return Did this call result in a modification of the visual representation of
             /// this object?
             bool referenceableDataChanged (const QModelIndex& topLeft,
@@ -146,6 +164,9 @@ namespace CSVRender
             /// \return Did this call result in a modification of the visual representation of
             /// this object?
             bool referenceDataChanged (const QModelIndex& topLeft, const QModelIndex& bottomRight);
+
+            /// Reloads the underlying asset
+            void reloadAssets();
 
             /// Returns an empty string if this is a refereceable-type object.
             std::string getReferenceId() const;
@@ -171,6 +192,8 @@ namespace CSVRender
 
             /// Set override scale
             void setScale (float scale);
+
+            void setMarkerTransparency(float value);
 
             /// Apply override changes via command and end edit mode
             void apply (CSMWorld::CommandMacro& commands);

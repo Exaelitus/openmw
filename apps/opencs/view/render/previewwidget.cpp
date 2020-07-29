@@ -1,7 +1,5 @@
 #include "previewwidget.hpp"
 
-#include <osgGA/TrackballManipulator>
-
 #include "../../model/world/data.hpp"
 #include "../../model/world/idtable.hpp"
 
@@ -9,7 +7,7 @@ CSVRender::PreviewWidget::PreviewWidget (CSMWorld::Data& data,
     const std::string& id, bool referenceable, QWidget *parent)
 : SceneWidget (data.getResourceSystem(), parent), mData (data), mObject(data, mRootNode, id, referenceable)
 {
-    mView->setCameraManipulator(new osgGA::TrackballManipulator);
+    selectNavigationMode("orbit");
 
     QAbstractItemModel *referenceables =
         mData.getTableModel (CSMWorld::UniversalId::Type_Referenceables);
@@ -18,6 +16,11 @@ CSVRender::PreviewWidget::PreviewWidget (CSMWorld::Data& data,
         this, SLOT (referenceableDataChanged (const QModelIndex&, const QModelIndex&)));
     connect (referenceables, SIGNAL (rowsAboutToBeRemoved (const QModelIndex&, int, int)),
         this, SLOT (referenceableAboutToBeRemoved (const QModelIndex&, int, int)));
+
+    connect (&mData, SIGNAL (assetTablesChanged ()),
+        this, SLOT (assetTablesChanged ()));
+
+    setExterior(false);
 
     if (!referenceable)
     {
@@ -120,4 +123,9 @@ void CSVRender::PreviewWidget::referenceAboutToBeRemoved (const QModelIndex& par
 
     if (index.row()>=start && index.row()<=end)
         emit closeRequest();
+}
+
+void CSVRender::PreviewWidget::assetTablesChanged ()
+{
+    mObject.reloadAssets();
 }

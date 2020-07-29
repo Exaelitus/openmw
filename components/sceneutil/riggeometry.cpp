@@ -1,144 +1,112 @@
 #include "riggeometry.hpp"
 
-#include <stdexcept>
-#include <iostream>
-#include <cstdlib>
+#include <osg/Version>
+
+#include <components/debug/debuglog.hpp>
 
 #include "skeleton.hpp"
 #include "util.hpp"
 
+namespace
+{
+    inline void accumulateMatrix(const osg::Matrixf& invBindMatrix, const osg::Matrixf& matrix, const float weight, osg::Matrixf& result)
+    {
+        osg::Matrixf m = invBindMatrix * matrix;
+        float* ptr = m.ptr();
+        float* ptrresult = result.ptr();
+        ptrresult[0] += ptr[0] * weight;
+        ptrresult[1] += ptr[1] * weight;
+        ptrresult[2] += ptr[2] * weight;
+
+        ptrresult[4] += ptr[4] * weight;
+        ptrresult[5] += ptr[5] * weight;
+        ptrresult[6] += ptr[6] * weight;
+
+        ptrresult[8] += ptr[8] * weight;
+        ptrresult[9] += ptr[9] * weight;
+        ptrresult[10] += ptr[10] * weight;
+
+        ptrresult[12] += ptr[12] * weight;
+        ptrresult[13] += ptr[13] * weight;
+        ptrresult[14] += ptr[14] * weight;
+    }
+}
+
 namespace SceneUtil
 {
 
-class UpdateRigBounds : public osg::Drawable::UpdateCallback
-{
-public:
-    UpdateRigBounds()
-    {
-    }
-
-    UpdateRigBounds(const UpdateRigBounds& copy, const osg::CopyOp& copyop)
-        : osg::Drawable::UpdateCallback(copy, copyop)
-    {
-    }
-
-    META_Object(SceneUtil, UpdateRigBounds)
-
-    void update(osg::NodeVisitor* nv, osg::Drawable* drw)
-    {
-        RigGeometry* rig = static_cast<RigGeometry*>(drw);
-
-        rig->updateBounds(nv);
-    }
-};
-
-// TODO: make threadsafe for multiple cull threads
-class UpdateRigGeometry : public osg::Drawable::CullCallback
-{
-public:
-    UpdateRigGeometry()
-    {
-    }
-
-    UpdateRigGeometry(const UpdateRigGeometry& copy, const osg::CopyOp& copyop)
-        : osg::Drawable::CullCallback(copy, copyop)
-    {
-    }
-
-    META_Object(SceneUtil, UpdateRigGeometry)
-
-    virtual bool cull(osg::NodeVisitor* nv, osg::Drawable* drw, osg::State*) const
-    {
-        RigGeometry* geom = static_cast<RigGeometry*>(drw);
-        geom->update(nv);
-        return false;
-    }
-};
-
-// We can't compute the bounds without a NodeVisitor, since we need the current geomToSkelMatrix.
-// So we return nothing. Bounds are updated every frame in the UpdateCallback.
-class DummyComputeBoundCallback : public osg::Drawable::ComputeBoundingBoxCallback
-{
-public:
-    virtual osg::BoundingBox computeBound(const osg::Drawable&) const  { return osg::BoundingBox(); }
-};
-
 RigGeometry::RigGeometry()
-    : mSkeleton(NULL)
+    : mSkeleton(nullptr)
     , mLastFrameNumber(0)
     , mBoundsFirstFrame(true)
 {
-    setCullCallback(new UpdateRigGeometry);
-    setUpdateCallback(new UpdateRigBounds);
-    setSupportsDisplayList(false);
-    setUseVertexBufferObjects(true);
-    setComputeBoundingBoxCallback(new DummyComputeBoundCallback);
+    setNumChildrenRequiringUpdateTraversal(1);
+    // update done in accept(NodeVisitor&)
 }
 
 RigGeometry::RigGeometry(const RigGeometry &copy, const osg::CopyOp &copyop)
-    : osg::Geometry(copy, copyop)
-    , mSkeleton(NULL)
+    : Drawable(copy, copyop)
+    , mSkeleton(nullptr)
     , mInfluenceMap(copy.mInfluenceMap)
+    , mBone2VertexVector(copy.mBone2VertexVector)
+    , mBoneSphereVector(copy.mBoneSphereVector)
     , mLastFrameNumber(0)
     , mBoundsFirstFrame(true)
 {
     setSourceGeometry(copy.mSourceGeometry);
+    setNumChildrenRequiringUpdateTraversal(1);
 }
 
 void RigGeometry::setSourceGeometry(osg::ref_ptr<osg::Geometry> sourceGeometry)
 {
     mSourceGeometry = sourceGeometry;
 
-    osg::Geometry& from = *sourceGeometry;
-
-    if (from.getStateSet())
-        setStateSet(from.getStateSet());
-
-    // shallow copy primitive sets & vertex attributes that we will not modify
-    setPrimitiveSetList(from.getPrimitiveSetList());
-    setColorArray(from.getColorArray());
-    setSecondaryColorArray(from.getSecondaryColorArray());
-    setFogCoordArray(from.getFogCoordArray());
-
-    // need to copy over texcoord list manually due to a missing null pointer check in setTexCoordArrayList(), this has been fixed in OSG 3.5
-    osg::Geometry::ArrayList& texCoordList = from.getTexCoordArrayList();
-    for (unsigned int i=0; i<texCoordList.size(); ++i)
-        if (texCoordList[i])
-            setTexCoordArray(i, texCoordList[i], osg::Array::BIND_PER_VERTEX);
-
-    setVertexAttribArrayList(from.getVertexAttribArrayList());
-
-    // vertices and normals are modified every frame, so we need to deep copy them.
-    // assign a dedicated VBO to make sure that modifications don't interfere with source geometry's VBO.
-    osg::ref_ptr<osg::VertexBufferObject> vbo (new osg::VertexBufferObject);
-    vbo->setUsage(GL_DYNAMIC_DRAW_ARB);
-
-    osg::ref_ptr<osg::Array> vertexArray = osg::clone(from.getVertexArray(), osg::CopyOp::DEEP_COPY_ALL);
-    if (vertexArray)
+    for (unsigned int i=0; i<2; ++i)
     {
-        vertexArray->setVertexBufferObject(vbo);
-        setVertexArray(vertexArray);
-    }
+        const osg::Geometry& from = *sourceGeometry;
+        mGeometry[i] = new osg::Geometry(from, osg::CopyOp::SHALLOW_COPY);
+        osg::Geometry& to = *mGeometry[i];
+        to.setSupportsDisplayList(false);
+        to.setUseVertexBufferObjects(true);
+        to.setCullingActive(false); // make sure to disable culling since that's handled by this class
+        to.setComputeBoundingBoxCallback(new CopyBoundingBoxCallback());
+        to.setComputeBoundingSphereCallback(new CopyBoundingSphereCallback());
 
-    osg::ref_ptr<osg::Array> normalArray = osg::clone(from.getNormalArray(), osg::CopyOp::DEEP_COPY_ALL);
-    if (normalArray)
-    {
-        normalArray->setVertexBufferObject(vbo);
-        setNormalArray(normalArray, osg::Array::BIND_PER_VERTEX);
-    }
+        // vertices and normals are modified every frame, so we need to deep copy them.
+        // assign a dedicated VBO to make sure that modifications don't interfere with source geometry's VBO.
+        osg::ref_ptr<osg::VertexBufferObject> vbo (new osg::VertexBufferObject);
+        vbo->setUsage(GL_DYNAMIC_DRAW_ARB);
 
-    if (osg::Vec4Array* tangents = dynamic_cast<osg::Vec4Array*>(from.getTexCoordArray(7)))
-    {
-        mSourceTangents = tangents;
-        osg::ref_ptr<osg::Array> tangentArray = osg::clone(tangents, osg::CopyOp::DEEP_COPY_ALL);
-        tangentArray->setVertexBufferObject(vbo);
-        setTexCoordArray(7, tangentArray, osg::Array::BIND_PER_VERTEX);
+        osg::ref_ptr<osg::Array> vertexArray = static_cast<osg::Array*>(from.getVertexArray()->clone(osg::CopyOp::DEEP_COPY_ALL));
+        if (vertexArray)
+        {
+            vertexArray->setVertexBufferObject(vbo);
+            to.setVertexArray(vertexArray);
+        }
+
+        if (const osg::Array* normals = from.getNormalArray())
+        {
+            osg::ref_ptr<osg::Array> normalArray = static_cast<osg::Array*>(normals->clone(osg::CopyOp::DEEP_COPY_ALL));
+            if (normalArray)
+            {
+                normalArray->setVertexBufferObject(vbo);
+                to.setNormalArray(normalArray, osg::Array::BIND_PER_VERTEX);
+            }
+        }
+
+        if (const osg::Vec4Array* tangents = dynamic_cast<const osg::Vec4Array*>(from.getTexCoordArray(7)))
+        {
+            mSourceTangents = tangents;
+            osg::ref_ptr<osg::Array> tangentArray = static_cast<osg::Array*>(tangents->clone(osg::CopyOp::DEEP_COPY_ALL));
+            tangentArray->setVertexBufferObject(vbo);
+            to.setTexCoordArray(7, tangentArray, osg::Array::BIND_PER_VERTEX);
+        }
+        else
+            mSourceTangents = nullptr;
     }
-    else
-        mSourceTangents = NULL;
 }
 
-osg::ref_ptr<osg::Geometry> RigGeometry::getSourceGeometry()
+osg::ref_ptr<osg::Geometry> RigGeometry::getSourceGeometry() const
 {
     return mSourceGeometry;
 }
@@ -158,135 +126,133 @@ bool RigGeometry::initFromParentSkeleton(osg::NodeVisitor* nv)
 
     if (!mSkeleton)
     {
-        std::cerr << "A RigGeometry did not find its parent skeleton" << std::endl;
+        Log(Debug::Error) << "Error: A RigGeometry did not find its parent skeleton";
         return false;
     }
 
     if (!mInfluenceMap)
     {
-        std::cerr << "No InfluenceMap set on RigGeometry" << std::endl;
+        Log(Debug::Error) << "Error: No InfluenceMap set on RigGeometry";
         return false;
     }
 
-    typedef std::map<unsigned short, std::vector<BoneWeight> > Vertex2BoneMap;
-    Vertex2BoneMap vertex2BoneMap;
-    for (std::map<std::string, BoneInfluence>::const_iterator it = mInfluenceMap->mMap.begin(); it != mInfluenceMap->mMap.end(); ++it)
+    mBoneNodesVector.clear();
+    for (auto& bonePair : mBoneSphereVector->mData)
     {
-        Bone* bone = mSkeleton->getBone(it->first);
+        const std::string& boneName = bonePair.first;
+        Bone* bone = mSkeleton->getBone(boneName);
         if (!bone)
         {
-            std::cerr << "RigGeometry did not find bone " << it->first << std::endl;
+            mBoneNodesVector.push_back(nullptr);
+            Log(Debug::Error) << "Error: RigGeometry did not find bone " << boneName;
             continue;
         }
 
-        mBoneSphereMap[bone] = it->second.mBoundSphere;
-
-        const BoneInfluence& bi = it->second;
-
-        const std::map<unsigned short, float>& weights = it->second.mWeights;
-        for (std::map<unsigned short, float>::const_iterator weightIt = weights.begin(); weightIt != weights.end(); ++weightIt)
-        {
-            std::vector<BoneWeight>& vec = vertex2BoneMap[weightIt->first];
-
-            BoneWeight b = std::make_pair(std::make_pair(bone, bi.mInvBindMatrix), weightIt->second);
-
-            vec.push_back(b);
-        }
+        mBoneNodesVector.push_back(bone);
     }
 
-    for (Vertex2BoneMap::iterator it = vertex2BoneMap.begin(); it != vertex2BoneMap.end(); ++it)
+    for (auto& pair : mBone2VertexVector->mData)
     {
-        mBone2VertexMap[it->second].push_back(it->first);
+        for (auto &weight : pair.first)
+        {
+            const std::string& boneName = weight.first.first;
+            Bone* bone = mSkeleton->getBone(boneName);
+            if (!bone)
+            {
+                mBoneNodesVector.push_back(nullptr);
+                Log(Debug::Error) << "Error: RigGeometry did not find bone " << boneName;
+                continue;
+            }
+
+            mBoneNodesVector.push_back(bone);
+        }
     }
 
     return true;
 }
 
-void accumulateMatrix(const osg::Matrixf& invBindMatrix, const osg::Matrixf& matrix, float weight, osg::Matrixf& result)
-{
-    osg::Matrixf m = invBindMatrix * matrix;
-    float* ptr = m.ptr();
-    float* ptrresult = result.ptr();
-    ptrresult[0] += ptr[0] * weight;
-    ptrresult[1] += ptr[1] * weight;
-    ptrresult[2] += ptr[2] * weight;
-
-    ptrresult[4] += ptr[4] * weight;
-    ptrresult[5] += ptr[5] * weight;
-    ptrresult[6] += ptr[6] * weight;
-
-    ptrresult[8] += ptr[8] * weight;
-    ptrresult[9] += ptr[9] * weight;
-    ptrresult[10] += ptr[10] * weight;
-
-    ptrresult[12] += ptr[12] * weight;
-    ptrresult[13] += ptr[13] * weight;
-    ptrresult[14] += ptr[14] * weight;
-}
-
-void RigGeometry::update(osg::NodeVisitor* nv)
+void RigGeometry::cull(osg::NodeVisitor* nv)
 {
     if (!mSkeleton)
     {
-        std::cerr << "RigGeometry rendering with no skeleton, should have been initialized by UpdateVisitor" << std::endl;
+        Log(Debug::Error) << "Error: RigGeometry rendering with no skeleton, should have been initialized by UpdateVisitor";
         // try to recover anyway, though rendering is likely to be incorrect.
         if (!initFromParentSkeleton(nv))
             return;
     }
 
-    if (!mSkeleton->getActive() && mLastFrameNumber != 0)
+    unsigned int traversalNumber = nv->getTraversalNumber();
+    if (mLastFrameNumber == traversalNumber || (mLastFrameNumber != 0 && !mSkeleton->getActive()))
+    {
+        osg::Geometry& geom = *getGeometry(mLastFrameNumber);
+        nv->pushOntoNodePath(&geom);
+        nv->apply(geom);
+        nv->popFromNodePath();
         return;
+    }
+    mLastFrameNumber = traversalNumber;
+    osg::Geometry& geom = *getGeometry(mLastFrameNumber);
 
-    if (mLastFrameNumber == nv->getTraversalNumber())
-        return;
-    mLastFrameNumber = nv->getTraversalNumber();
-
-    mSkeleton->updateBoneMatrices(nv);
+    mSkeleton->updateBoneMatrices(traversalNumber);
 
     // skinning
-    osg::Vec3Array* positionSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getVertexArray());
-    osg::Vec3Array* normalSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getNormalArray());
-    osg::Vec4Array* tangentSrc = mSourceTangents;
+    const osg::Vec3Array* positionSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getVertexArray());
+    const osg::Vec3Array* normalSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getNormalArray());
+    const osg::Vec4Array* tangentSrc = mSourceTangents;
 
-    osg::Vec3Array* positionDst = static_cast<osg::Vec3Array*>(getVertexArray());
-    osg::Vec3Array* normalDst = static_cast<osg::Vec3Array*>(getNormalArray());
-    osg::Vec4Array* tangentDst = static_cast<osg::Vec4Array*>(getTexCoordArray(7));
+    osg::Vec3Array* positionDst = static_cast<osg::Vec3Array*>(geom.getVertexArray());
+    osg::Vec3Array* normalDst = static_cast<osg::Vec3Array*>(geom.getNormalArray());
+    osg::Vec4Array* tangentDst = static_cast<osg::Vec4Array*>(geom.getTexCoordArray(7));
 
-    for (Bone2VertexMap::const_iterator it = mBone2VertexMap.begin(); it != mBone2VertexMap.end(); ++it)
+    int index = mBoneSphereVector->mData.size();
+    for (auto &pair : mBone2VertexVector->mData)
     {
-        osg::Matrixf resultMat  (0, 0, 0, 0,
+        osg::Matrixf resultMat (0, 0, 0, 0,
                                 0, 0, 0, 0,
                                 0, 0, 0, 0,
                                 0, 0, 0, 1);
 
-        for (std::vector<BoneWeight>::const_iterator weightIt = it->first.begin(); weightIt != it->first.end(); ++weightIt)
+        for (auto &weight : pair.first)
         {
-            Bone* bone = weightIt->first.first;
-            const osg::Matrix& invBindMatrix = weightIt->first.second;
-            float weight = weightIt->second;
-            const osg::Matrixf& boneMatrix = bone->mMatrixInSkeletonSpace;
-            accumulateMatrix(invBindMatrix, boneMatrix, weight, resultMat);
-        }
-        resultMat = resultMat * mGeomToSkelMatrix;
+            Bone* bone = mBoneNodesVector[index];
+            if (bone == nullptr)
+                continue;
 
-        for (std::vector<unsigned short>::const_iterator vertexIt = it->second.begin(); vertexIt != it->second.end(); ++vertexIt)
+            accumulateMatrix(weight.first.second, bone->mMatrixInSkeletonSpace, weight.second, resultMat);
+            index++;
+        }
+
+        if (mGeomToSkelMatrix)
+            resultMat *= (*mGeomToSkelMatrix);
+
+        for (auto &vertex : pair.second)
         {
-            unsigned short vertex = *vertexIt;
             (*positionDst)[vertex] = resultMat.preMult((*positionSrc)[vertex]);
-            (*normalDst)[vertex] = osg::Matrix::transform3x3((*normalSrc)[vertex], resultMat);
+            if (normalDst)
+                (*normalDst)[vertex] = osg::Matrixf::transform3x3((*normalSrc)[vertex], resultMat);
+
             if (tangentDst)
             {
-                osg::Vec4f srcTangent = (*tangentSrc)[vertex];
-                osg::Vec3f transformedTangent = osg::Matrix::transform3x3(osg::Vec3f(srcTangent.x(), srcTangent.y(), srcTangent.z()), resultMat);
+                const osg::Vec4f& srcTangent = (*tangentSrc)[vertex];
+                osg::Vec3f transformedTangent = osg::Matrixf::transform3x3(osg::Vec3f(srcTangent.x(), srcTangent.y(), srcTangent.z()), resultMat);
                 (*tangentDst)[vertex] = osg::Vec4f(transformedTangent, srcTangent.w());
             }
         }
     }
 
     positionDst->dirty();
-    normalDst->dirty();
+    if (normalDst)
+        normalDst->dirty();
     if (tangentDst)
         tangentDst->dirty();
+
+#if OSG_MIN_VERSION_REQUIRED(3, 5, 6)
+    geom.dirtyGLObjects();
+#endif
+
+    nv->pushOntoNodePath(&geom);
+    nv->apply(geom);
+    nv->popFromNodePath();
 }
 
 void RigGeometry::updateBounds(osg::NodeVisitor *nv)
@@ -301,48 +267,130 @@ void RigGeometry::updateBounds(osg::NodeVisitor *nv)
         return;
     mBoundsFirstFrame = false;
 
-    mSkeleton->updateBoneMatrices(nv);
+    mSkeleton->updateBoneMatrices(nv->getTraversalNumber());
 
-    updateGeomToSkelMatrix(nv);
+    updateGeomToSkelMatrix(nv->getNodePath());
 
     osg::BoundingBox box;
-    for (BoneSphereMap::const_iterator it = mBoneSphereMap.begin(); it != mBoneSphereMap.end(); ++it)
+
+    int index = 0;
+    for (auto& boundPair : mBoneSphereVector->mData)
     {
-        Bone* bone = it->first;
-        osg::BoundingSpheref bs = it->second;
-        transformBoundingSphere(bone->mMatrixInSkeletonSpace * mGeomToSkelMatrix, bs);
+        Bone* bone = mBoneNodesVector[index];
+        if (bone == nullptr)
+            continue;
+
+        index++;
+        osg::BoundingSpheref bs = boundPair.second;
+        if (mGeomToSkelMatrix)
+            transformBoundingSphere(bone->mMatrixInSkeletonSpace * (*mGeomToSkelMatrix), bs);
+        else
+            transformBoundingSphere(bone->mMatrixInSkeletonSpace, bs);
         box.expandBy(bs);
     }
 
-    _boundingBox = box;
-    _boundingBoxComputed = true;
-    // in OSG 3.3.3 and up Drawable inherits from Node, so has a bounding sphere as well.
-    _boundingSphere = osg::BoundingSphere(_boundingBox);
-    _boundingSphereComputed = true;
-    for (unsigned int i=0; i<getNumParents(); ++i)
-        getParent(i)->dirtyBound();
+    if (box != _boundingBox)
+    {
+        _boundingBox = box;
+        _boundingSphere = osg::BoundingSphere(_boundingBox);
+        _boundingSphereComputed = true;
+        for (unsigned int i=0; i<getNumParents(); ++i)
+            getParent(i)->dirtyBound();
+
+        for (unsigned int i = 0; i < 2; ++i)
+        {
+            osg::Geometry& geom = *mGeometry[i];
+            static_cast<CopyBoundingBoxCallback*>(geom.getComputeBoundingBoxCallback())->boundingBox = _boundingBox;
+            static_cast<CopyBoundingSphereCallback*>(geom.getComputeBoundingSphereCallback())->boundingSphere = _boundingSphere;
+            geom.dirtyBound();
+        }
+    }
 }
 
-void RigGeometry::updateGeomToSkelMatrix(osg::NodeVisitor *nv)
+void RigGeometry::updateGeomToSkelMatrix(const osg::NodePath& nodePath)
 {
-    mSkelToGeomPath.clear();
     bool foundSkel = false;
-    for (osg::NodePath::const_iterator it = nv->getNodePath().begin(); it != nv->getNodePath().end(); ++it)
+    osg::ref_ptr<osg::RefMatrix> geomToSkelMatrix;
+    for (osg::NodePath::const_iterator it = nodePath.begin(); it != nodePath.end(); ++it)
     {
+        osg::Node* node = *it;
         if (!foundSkel)
         {
-            if (*it == mSkeleton)
+            if (node == mSkeleton)
                 foundSkel = true;
         }
         else
-            mSkelToGeomPath.push_back(*it);
+        {
+            if (osg::Transform* trans = node->asTransform())
+            {
+                if (!geomToSkelMatrix)
+                    geomToSkelMatrix = new osg::RefMatrix;
+                trans->computeWorldToLocalMatrix(*geomToSkelMatrix, nullptr);
+            }
+        }
     }
-    mGeomToSkelMatrix = osg::computeWorldToLocal(mSkelToGeomPath);
+    if (geomToSkelMatrix && !geomToSkelMatrix->isIdentity())
+        mGeomToSkelMatrix = geomToSkelMatrix;
 }
 
 void RigGeometry::setInfluenceMap(osg::ref_ptr<InfluenceMap> influenceMap)
 {
     mInfluenceMap = influenceMap;
+
+    typedef std::map<unsigned short, std::vector<BoneWeight> > Vertex2BoneMap;
+    Vertex2BoneMap vertex2BoneMap;
+    mBoneSphereVector = new BoneSphereVector;
+    mBoneSphereVector->mData.reserve(mInfluenceMap->mData.size());
+    mBone2VertexVector = new Bone2VertexVector;
+    for (auto& influencePair : mInfluenceMap->mData)
+    {
+        const std::string& boneName = influencePair.first;
+        const BoneInfluence& bi = influencePair.second;
+        mBoneSphereVector->mData.emplace_back(boneName, bi.mBoundSphere);
+
+        for (auto& weightPair: bi.mWeights)
+        {
+            std::vector<BoneWeight>& vec = vertex2BoneMap[weightPair.first];
+
+            vec.emplace_back(std::make_pair(boneName, bi.mInvBindMatrix), weightPair.second);
+        }
+    }
+
+    Bone2VertexMap bone2VertexMap;
+    for (auto& vertexPair : vertex2BoneMap)
+    {
+        bone2VertexMap[vertexPair.second].emplace_back(vertexPair.first);
+    }
+
+    mBone2VertexVector->mData.reserve(bone2VertexMap.size());
+    mBone2VertexVector->mData.assign(bone2VertexMap.begin(), bone2VertexMap.end());
+}
+
+void RigGeometry::accept(osg::NodeVisitor &nv)
+{
+    if (!nv.validNodeMask(*this))
+        return;
+
+    nv.pushOntoNodePath(this);
+
+    if (nv.getVisitorType() == osg::NodeVisitor::CULL_VISITOR)
+        cull(&nv);
+    else if (nv.getVisitorType() == osg::NodeVisitor::UPDATE_VISITOR)
+        updateBounds(&nv);
+    else
+        nv.apply(*this);
+
+    nv.popFromNodePath();
+}
+
+void RigGeometry::accept(osg::PrimitiveFunctor& func) const
+{
+    getGeometry(mLastFrameNumber)->accept(func);
+}
+
+osg::Geometry* RigGeometry::getGeometry(unsigned int frame) const
+{
+    return mGeometry[frame%2].get();
 }
 
 

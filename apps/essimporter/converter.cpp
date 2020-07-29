@@ -1,11 +1,14 @@
 #include "converter.hpp"
 
 #include <stdexcept>
+#include <algorithm>
 
 #include <osgDB/WriteFile>
 
 #include <components/esm/creaturestate.hpp>
 #include <components/esm/containerstate.hpp>
+
+#include <components/misc/constants.hpp>
 
 #include "convertcrec.hpp"
 #include "convertcntc.hpp"
@@ -34,6 +37,9 @@ namespace
             objstate.mCount = 0;
         convertSCRI(cellref.mSCRI, objstate.mLocals);
         objstate.mHasLocals = !objstate.mLocals.mVariables.empty();
+
+        if (cellref.mHasANIS)
+            convertANIS(cellref.mANIS, objstate.mAnimationState);
     }
 
     bool isIndexedRefId(const std::string& indexedRefId)
@@ -46,9 +52,37 @@ namespace
                           // a dynamically created record e.g. player-enchanted weapon
 
         std::string index = indexedRefId.substr(indexedRefId.size()-8);
-        if(index.find_first_not_of("0123456789ABCDEF") == std::string::npos )
-            return true;
-        return false;
+        return index.find_first_not_of("0123456789ABCDEF") == std::string::npos;
+    }
+
+    void splitIndexedRefId(const std::string& indexedRefId, int& refIndex, std::string& refId)
+    {
+        std::stringstream stream;
+        stream << std::hex << indexedRefId.substr(indexedRefId.size()-8,8);
+        stream >> refIndex;
+
+        refId = indexedRefId.substr(0,indexedRefId.size()-8);
+    }
+
+    int convertActorId(const std::string& indexedRefId, ESSImport::Context& context)
+    {
+        if (isIndexedRefId(indexedRefId))
+        {
+            int refIndex;
+            std::string refId;
+            splitIndexedRefId(indexedRefId, refIndex, refId);
+
+            auto it = context.mActorIdMap.find(std::make_pair(refIndex, refId));
+            if (it == context.mActorIdMap.end())
+                return -1;
+            return it->second;
+        }
+        else if (indexedRefId == "PlayerSaveGame")
+        {
+            return context.mPlayer.mObject.mCreatureStats.mActorId;
+        }
+
+        return -1;
     }
 }
 
@@ -103,12 +137,12 @@ namespace ESSImport
         image2->allocateImage(width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE);
         memcpy(image2->data(), &data[0], data.size());
 
-        for (std::set<std::pair<int, int> >::const_iterator it = mContext->mExploredCells.begin(); it != mContext->mExploredCells.end(); ++it)
+        for (const auto & exploredCell : mContext->mExploredCells)
         {
-            if (it->first > mContext->mGlobalMapState.mBounds.mMaxX
-                    || it->first < mContext->mGlobalMapState.mBounds.mMinX
-                    || it->second > mContext->mGlobalMapState.mBounds.mMaxY
-                    || it->second < mContext->mGlobalMapState.mBounds.mMinY)
+            if (exploredCell.first > mContext->mGlobalMapState.mBounds.mMaxX
+                    || exploredCell.first < mContext->mGlobalMapState.mBounds.mMinX
+                    || exploredCell.second > mContext->mGlobalMapState.mBounds.mMaxY
+                    || exploredCell.second < mContext->mGlobalMapState.mBounds.mMinY)
             {
                 // out of bounds, I think this could happen, since the original engine had a fixed-size map
                 continue;
@@ -116,12 +150,12 @@ namespace ESSImport
 
             int imageLeftSrc = mGlobalMapImage->s()/2;
             int imageTopSrc = mGlobalMapImage->t()/2;
-            imageLeftSrc += it->first * cellSize;
-            imageTopSrc -= it->second * cellSize;
+            imageLeftSrc += exploredCell.first * cellSize;
+            imageTopSrc -= exploredCell.second * cellSize;
             int imageLeftDst = width/2;
             int imageTopDst = height/2;
-            imageLeftDst += it->first * cellSize;
-            imageTopDst -= it->second * cellSize;
+            imageLeftDst += exploredCell.first * cellSize;
+            imageTopDst -= exploredCell.second * cellSize;
             for (int x=0; x<cellSize; ++x)
                 for (int y=0; y<cellSize; ++y)
                 {
@@ -134,7 +168,7 @@ namespace ESSImport
         osgDB::ReaderWriter* readerwriter = osgDB::Registry::instance()->getReaderWriterForExtension("png");
         if (!readerwriter)
         {
-            std::cerr << "can't write global map image, no png readerwriter found" << std::endl;
+            std::cerr << "Error: can't write global map image, no png readerwriter found" << std::endl;
             return;
         }
 
@@ -143,7 +177,7 @@ namespace ESSImport
         osgDB::ReaderWriter::WriteResult result = readerwriter->writeImage(*image2, ostream);
         if (!result.success())
         {
-            std::cerr << "can't write global map image: " << result.message() << " code " << result.status() << std::endl;
+            std::cerr << "Error: can't write global map image: " << result.message() << " code " << result.status() << std::endl;
             return;
         }
 
@@ -254,12 +288,12 @@ namespace ESSImport
             notepos[1] += 31.f;
             notepos[0] += 0.5;
             notepos[1] += 0.5;
-            notepos[0] = 8192 * notepos[0] / 32.f;
-            notepos[1] = 8192 * notepos[1] / 32.f;
+            notepos[0] = Constants::CellSizeInUnits * notepos[0] / 32.f;
+            notepos[1] = Constants::CellSizeInUnits * notepos[1] / 32.f;
             if (cell.isExterior())
             {
-                notepos[0] += 8192 * cell.mData.mX;
-                notepos[1] += 8192 * cell.mData.mY;
+                notepos[0] += Constants::CellSizeInUnits * cell.mData.mX;
+                notepos[1] += Constants::CellSizeInUnits * cell.mData.mY;
             }
             // TODO: what encoding is this in?
             std::string note = esm.getHNString("MPNT");
@@ -293,9 +327,8 @@ namespace ESSImport
         csta.mWaterLevel = esmcell.mWater;
         csta.save(esm);
 
-        for (std::vector<CellRef>::const_iterator refIt = cell.mRefs.begin(); refIt != cell.mRefs.end(); ++refIt)
+        for (const auto & cellref : cell.mRefs)
         {
-            const CellRef& cellref = *refIt;
             ESM::CellRef out (cellref);
 
             // TODO: use mContext->mCreatures/mNpcs
@@ -319,12 +352,9 @@ namespace ESSImport
             }
             else
             {
-                std::stringstream stream;
-                stream << std::hex << cellref.mIndexedRefId.substr(cellref.mIndexedRefId.size()-8,8);
                 int refIndex;
-                stream >> refIndex;
+                splitIndexedRefId(cellref.mIndexedRefId, refIndex, out.mRefID);
 
-                out.mRefID = cellref.mIndexedRefId.substr(0,cellref.mIndexedRefId.size()-8);
                 std::string idLower = Misc::StringUtils::lowerCase(out.mRefID);
 
                 std::map<std::pair<int, std::string>, NPCC>::const_iterator npccIt = mContext->mNpcChanges.find(
@@ -344,6 +374,10 @@ namespace ESSImport
                     convertNpcData(cellref, objstate.mNpcStats);
                     convertNPCC(npccIt->second, objstate);
                     convertCellRef(cellref, objstate);
+
+                    objstate.mCreatureStats.mActorId = mContext->generateActorId();
+                    mContext->mActorIdMap.insert(std::make_pair(std::make_pair(refIndex, out.mRefID), objstate.mCreatureStats.mActorId));
+
                     esm.writeHNT ("OBJE", ESM::REC_NPC_);
                     objstate.save(esm);
                     continue;
@@ -380,6 +414,10 @@ namespace ESSImport
                         convertACSC(cellref.mACSC, objstate.mCreatureStats);
                     convertCREC(crecIt->second, objstate);
                     convertCellRef(cellref, objstate);
+
+                    objstate.mCreatureStats.mActorId = mContext->generateActorId();
+                    mContext->mActorIdMap.insert(std::make_pair(std::make_pair(refIndex, out.mRefID), objstate.mCreatureStats.mActorId));
+
                     esm.writeHNT ("OBJE", ESM::REC_CREA);
                     objstate.save(esm);
                     continue;
@@ -396,18 +434,87 @@ namespace ESSImport
 
     void ConvertCell::write(ESM::ESMWriter &esm)
     {
-        for (std::map<std::string, Cell>::const_iterator it = mIntCells.begin(); it != mIntCells.end(); ++it)
-            writeCell(it->second, esm);
+        for (const auto & cell : mIntCells)
+            writeCell(cell.second, esm);
 
-        for (std::map<std::pair<int, int>, Cell>::const_iterator it = mExtCells.begin(); it != mExtCells.end(); ++it)
-            writeCell(it->second, esm);
+        for (const auto & cell : mExtCells)
+            writeCell(cell.second, esm);
 
-        for (std::vector<ESM::CustomMarker>::const_iterator it = mMarkers.begin(); it != mMarkers.end(); ++it)
+        for (const auto & marker : mMarkers)
         {
             esm.startRecord(ESM::REC_MARK);
-            it->save(esm);
+            marker.save(esm);
             esm.endRecord(ESM::REC_MARK);
         }
+    }
+
+    void ConvertPROJ::read(ESM::ESMReader& esm)
+    {
+        mProj.load(esm);
+    }
+
+    void ConvertPROJ::write(ESM::ESMWriter& esm)
+    {
+        for (const PROJ::PNAM& pnam : mProj.mProjectiles)
+        {
+            if (!pnam.isMagic())
+            {
+                ESM::ProjectileState out;
+                convertBaseState(out, pnam);
+
+                out.mBowId = pnam.mBowId.toString();
+                out.mVelocity = pnam.mVelocity;
+                out.mAttackStrength = pnam.mAttackStrength;
+
+                esm.startRecord(ESM::REC_PROJ);
+                out.save(esm);
+                esm.endRecord(ESM::REC_PROJ);
+            }
+            else
+            {
+                ESM::MagicBoltState out;
+                convertBaseState(out, pnam);
+
+                auto it = std::find_if(mContext->mActiveSpells.begin(), mContext->mActiveSpells.end(),
+                                       [&pnam](const SPLM::ActiveSpell& spell) -> bool { return spell.mIndex == pnam.mSplmIndex; });
+
+                if (it == mContext->mActiveSpells.end())
+                {
+                    std::cerr << "Warning: Skipped conversion for magic projectile \"" << pnam.mArrowId.toString() << "\" (invalid spell link)" << std::endl;
+                    continue;
+                }
+
+                out.mSpellId = it->mSPDT.mId.toString();
+                out.mSpeed = pnam.mSpeed * 0.001f; // not sure where this factor comes from
+
+                esm.startRecord(ESM::REC_MPRJ);
+                out.save(esm);
+                esm.endRecord(ESM::REC_MPRJ);
+            }
+        }
+    }
+
+    void ConvertPROJ::convertBaseState(ESM::BaseProjectileState& base, const PROJ::PNAM& pnam)
+    {
+        base.mId = pnam.mArrowId.toString();
+        base.mPosition = pnam.mPosition;
+
+        osg::Quat orient;
+        orient.makeRotate(osg::Vec3f(0,1,0), pnam.mVelocity);
+        base.mOrientation = orient;
+
+        base.mActorId = convertActorId(pnam.mActorId.toString(), *mContext);
+    }
+
+    void ConvertSPLM::read(ESM::ESMReader& esm)
+    {
+        mSPLM.load(esm);
+        mContext->mActiveSpells = mSPLM.mActiveSpells;
+    }
+
+    void ConvertSPLM::write(ESM::ESMWriter& esm)
+    {
+        std::cerr << "Warning: Skipped active spell conversion (not implemented)" << std::endl;
     }
 
 }

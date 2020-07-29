@@ -1,9 +1,6 @@
 #include "selectwrapper.hpp"
 
-#include <cctype>
-
 #include <stdexcept>
-#include <algorithm>
 #include <sstream>
 #include <iterator>
 
@@ -210,7 +207,7 @@ MWDialogue::SelectWrapper::Type MWDialogue::SelectWrapper::getType() const
 
     static const Function numericFunctions[] =
     {
-        Function_Global, Function_Local,
+        Function_Global, Function_Local, Function_NotLocal,
         Function_PcDynamicStat, Function_PcHealthPercent,
         Function_HealthPercent,
         Function_None // end marker
@@ -232,7 +229,7 @@ MWDialogue::SelectWrapper::Type MWDialogue::SelectWrapper::getType() const
     static const Function invertedBooleanFunctions[] =
     {
         Function_NotId, Function_NotFaction, Function_NotClass,
-        Function_NotRace, Function_NotCell, Function_NotLocal,
+        Function_NotRace, Function_NotCell,
         Function_None // end marker
     };
 

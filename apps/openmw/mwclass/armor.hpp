@@ -19,10 +19,9 @@ namespace MWClass
             virtual void insertObject(const MWWorld::Ptr& ptr, const std::string& model, MWPhysics::PhysicsSystem& physics) const;
 
             virtual std::string getName (const MWWorld::ConstPtr& ptr) const;
-            ///< \return name (the one that is to be presented to the user; not the internal one);
-            /// can return an empty string.
+            ///< \return name or ID; can return an empty string.
 
-            virtual boost::shared_ptr<MWWorld::Action> activate (const MWWorld::Ptr& ptr,
+            virtual std::shared_ptr<MWWorld::Action> activate (const MWWorld::Ptr& ptr,
                 const MWWorld::Ptr& actor) const;
             ///< Generate action for activation
 
@@ -42,9 +41,6 @@ namespace MWClass
             virtual int getEquipmentSkill (const MWWorld::ConstPtr& ptr) const;
             /// Return the index of the skill this item corresponds to when equipped or -1, if there is
             /// no such skill.
-
-            virtual bool hasToolTip (const MWWorld::ConstPtr& ptr) const;
-            ///< @return true if this object has a tooltip when focused (default implementation: false)
 
             virtual MWGui::ToolTipInfo getToolTipInfo (const MWWorld::ConstPtr& ptr, int count) const;
             ///< @return the content of the tool tip to be displayed. raises exception if the object has no tooltip.
@@ -73,8 +69,7 @@ namespace MWClass
             ///< Return 0 if player cannot equip item. 1 if can equip. 2 if it's twohanded weapon. 3 if twohanded weapon conflicts with that. \n
             ///  Second item in the pair specifies the error message
 
-            virtual boost::shared_ptr<MWWorld::Action> use (const MWWorld::Ptr& ptr)
-                const;
+            virtual std::shared_ptr<MWWorld::Action> use (const MWWorld::Ptr& ptr, bool force=false) const;
             ///< Generate action for using via inventory menu
 
             virtual std::string getModel(const MWWorld::ConstPtr &ptr) const;
@@ -84,7 +79,7 @@ namespace MWClass
             virtual bool canSell (const MWWorld::ConstPtr& item, int npcServices) const;
 
             /// Get the effective armor rating, factoring in the actor's skills, for the given armor.
-            virtual int getEffectiveArmorRating(const MWWorld::ConstPtr& armor, const MWWorld::Ptr& actor) const;
+            virtual float getEffectiveArmorRating(const MWWorld::ConstPtr& armor, const MWWorld::Ptr& actor) const;
     };
 }
 

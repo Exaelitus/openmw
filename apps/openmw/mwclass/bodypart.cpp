@@ -31,9 +31,14 @@ namespace MWClass
         return std::string();
     }
 
+    bool BodyPart::hasToolTip(const MWWorld::ConstPtr& ptr) const
+    {
+        return false;
+    }
+
     void BodyPart::registerSelf()
     {
-        boost::shared_ptr<MWWorld::Class> instance (new BodyPart);
+        std::shared_ptr<MWWorld::Class> instance (new BodyPart);
 
         registerClass (typeid (ESM::BodyPart).name(), instance);
     }

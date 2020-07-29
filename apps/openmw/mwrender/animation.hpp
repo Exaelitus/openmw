@@ -4,10 +4,15 @@
 #include "../mwworld/ptr.hpp"
 
 #include <components/sceneutil/controller.hpp>
+#include <components/sceneutil/util.hpp>
+#include <components/nifosg/textkeymap.hpp>
+
+#include <vector>
 
 namespace ESM
 {
     struct Light;
+    struct MagicEffect;
 }
 
 namespace Resource
@@ -24,6 +29,7 @@ namespace NifOsg
 namespace SceneUtil
 {
     class LightSource;
+    class LightListCallback;
     class Skeleton;
 }
 
@@ -32,6 +38,7 @@ namespace MWRender
 
 class ResetAccumRootCallback;
 class RotateController;
+class TransparencyUpdater;
 
 class EffectAnimationTime : public SceneUtil::ControllerSource
 {
@@ -55,9 +62,6 @@ public:
 
     ~PartHolder();
 
-    /// Unreferences mNode *without* detaching it from the graph. Only use if you know what you are doing.
-    void unlink();
-
     osg::ref_ptr<osg::Node> getNode()
     {
         return mNode;
@@ -69,9 +73,19 @@ private:
     void operator= (const PartHolder&);
     PartHolder(const PartHolder&);
 };
-typedef boost::shared_ptr<PartHolder> PartHolderPtr;
+typedef std::shared_ptr<PartHolder> PartHolderPtr;
 
-class Animation
+struct EffectParams
+{
+    std::string mModelName; // Just here so we don't add the same effect twice
+    std::shared_ptr<EffectAnimationTime> mAnimTime;
+    float mMaxControllerLength;
+    int mEffectId;
+    bool mLoop;
+    std::string mBoneName;
+};
+
+class Animation : public osg::Referenced
 {
 public:
     enum BoneGroup {
@@ -136,23 +150,27 @@ public:
     class TextKeyListener
     {
     public:
-        virtual void handleTextKey(const std::string &groupname, const std::multimap<float, std::string>::const_iterator &key,
-                           const std::multimap<float, std::string>& map) = 0;
+        virtual void handleTextKey(const std::string &groupname, NifOsg::TextKeyMap::ConstIterator key,
+                                   const NifOsg::TextKeyMap& map) = 0;
+
+        virtual ~TextKeyListener() = default;
     };
 
     void setTextKeyListener(TextKeyListener* listener);
+
+    virtual bool updateCarriedLeftVisible(const int weaptype) const { return false; };
 
 protected:
     class AnimationTime : public SceneUtil::ControllerSource
     {
     private:
-        boost::shared_ptr<float> mTimePtr;
+        std::shared_ptr<float> mTimePtr;
 
     public:
 
-        void setTimePtr(boost::shared_ptr<float> time)
+        void setTimePtr(std::shared_ptr<float> time)
         { mTimePtr = time; }
-        boost::shared_ptr<float> getTimePtr() const
+        std::shared_ptr<float> getTimePtr() const
         { return mTimePtr; }
 
         virtual float getValue(osg::NodeVisitor* nv);
@@ -170,17 +188,18 @@ protected:
     struct AnimSource;
 
     struct AnimState {
-        boost::shared_ptr<AnimSource> mSource;
+        std::shared_ptr<AnimSource> mSource;
         float mStartTime;
         float mLoopStartTime;
         float mLoopStopTime;
         float mStopTime;
 
-        typedef boost::shared_ptr<float> TimePtr;
+        typedef std::shared_ptr<float> TimePtr;
         TimePtr mTime;
         float mSpeedMult;
 
         bool mPlaying;
+        bool mLoopingEnabled;
         size_t mLoopCount;
 
         AnimPriority mPriority;
@@ -188,8 +207,8 @@ protected:
         bool mAutoDisable;
 
         AnimState() : mStartTime(0.0f), mLoopStartTime(0.0f), mLoopStopTime(0.0f), mStopTime(0.0f),
-                      mTime(new float), mSpeedMult(1.0f), mPlaying(false), mLoopCount(0),
-                      mPriority(0), mBlendMask(0), mAutoDisable(true)
+                      mTime(new float), mSpeedMult(1.0f), mPlaying(false), mLoopingEnabled(true),
+                      mLoopCount(0), mPriority(0), mBlendMask(0), mAutoDisable(true)
         {
         }
         ~AnimState();
@@ -202,11 +221,16 @@ protected:
         {
             *mTime = time;
         }
+
+        bool shouldLoop() const
+        {
+            return getTime() >= mLoopStopTime && mLoopingEnabled && mLoopCount > 0;
+        }
     };
     typedef std::map<std::string,AnimState> AnimStateMap;
     AnimStateMap mStates;
 
-    typedef std::vector<boost::shared_ptr<AnimSource> > AnimSourceList;
+    typedef std::vector<std::shared_ptr<AnimSource> > AnimSourceList;
     AnimSourceList mAnimSources;
 
     osg::ref_ptr<osg::Group> mInsert;
@@ -225,10 +249,9 @@ protected:
 
     // Keep track of controllers that we added to our scene graph.
     // We may need to rebuild these controllers when the active animation groups / sources change.
-    typedef std::multimap<osg::ref_ptr<osg::Node>, osg::ref_ptr<osg::NodeCallback> > ControllerMap;
-    ControllerMap mActiveControllers;
+    std::vector<std::pair<osg::ref_ptr<osg::Node>, osg::ref_ptr<osg::NodeCallback>>> mActiveControllers;
 
-    boost::shared_ptr<AnimationTime> mAnimationTimePtr[sNumBlendMasks];
+    std::shared_ptr<AnimationTime> mAnimationTimePtr[sNumBlendMasks];
 
     // Stored in all lowercase for a case-insensitive lookup
     typedef std::map<std::string, osg::ref_ptr<osg::MatrixTransform> > NodeMap;
@@ -241,28 +264,30 @@ protected:
 
     osg::Vec3f mAccumulate;
 
-    struct EffectParams
-    {
-        std::string mModelName; // Just here so we don't add the same effect twice
-        PartHolderPtr mObjects;
-        boost::shared_ptr<EffectAnimationTime> mAnimTime;
-        float mMaxControllerLength;
-        int mEffectId;
-        bool mLoop;
-        std::string mBoneName;
-    };
-
-    std::vector<EffectParams> mEffects;
-
     TextKeyListener* mTextKeyListener;
 
     osg::ref_ptr<RotateController> mHeadController;
+    osg::ref_ptr<RotateController> mSpineController;
+    osg::ref_ptr<RotateController> mRootController;
     float mHeadYawRadians;
     float mHeadPitchRadians;
+    float mUpperBodyYawRadians;
+    float mLegsYawRadians;
+    float mBodyPitchRadians;
+
+    RotateController* addRotateController(std::string bone);
+
+    bool mHasMagicEffects;
 
     osg::ref_ptr<SceneUtil::LightSource> mGlowLight;
+    osg::ref_ptr<SceneUtil::GlowUpdater> mGlowUpdater;
+    osg::ref_ptr<TransparencyUpdater> mTransparencyUpdater;
 
     float mAlpha;
+
+    mutable std::map<std::string, float> mAnimVelocities;
+
+    osg::ref_ptr<SceneUtil::LightListCallback> mLightListCallback;
 
     const NodeMap& getNodeMap() const;
 
@@ -270,7 +295,7 @@ protected:
      */
     void resetActiveGroups();
 
-    size_t detectBlendMask(osg::Node* node);
+    size_t detectBlendMask(const osg::Node* node) const;
 
     /* Updates the position of the accum root node for the given time, and
      * returns the wanted movement vector from the previous time. */
@@ -281,16 +306,16 @@ protected:
      * the marker is not found, or if the markers are the same, it returns
      * false.
      */
-    bool reset(AnimState &state, const std::multimap<float, std::string> &keys,
+    bool reset(AnimState &state, const NifOsg::TextKeyMap &keys,
                const std::string &groupname, const std::string &start, const std::string &stop,
                float startpoint, bool loopfallback);
 
-    void handleTextKey(AnimState &state, const std::string &groupname, const std::multimap<float, std::string>::const_iterator &key,
-                       const std::multimap<float, std::string>& map);
+    void handleTextKey(AnimState &state, const std::string &groupname, NifOsg::TextKeyMap::ConstIterator key,
+                       const NifOsg::TextKeyMap& map);
 
     /** Sets the root model of the object.
      *
-     * Note that you must make sure all animation sources are cleared before reseting the object
+     * Note that you must make sure all animation sources are cleared before resetting the object
      * root. All nodes previously retrieved with getNode will also become invalidated.
      * @param forceskeleton Wrap the object root in a Skeleton, even if it contains no skinned parts. Use this if you intend to add skinned parts manually.
      * @param baseonly If true, then any meshes or particle systems in the model are ignored
@@ -298,11 +323,15 @@ protected:
      */
     void setObjectRoot(const std::string &model, bool forceskeleton, bool baseonly, bool isCreature);
 
-    /** Adds the keyframe controllers in the specified model as a new animation source. Note that the .nif
-     * file extension will be replaced with .kf.
+    void loadAllAnimationsInFolder(const std::string &model, const std::string &baseModel);
+
+    /** Adds the keyframe controllers in the specified model as a new animation source.
      * @note Later added animation sources have the highest priority when it comes to finding a particular animation.
+     * @param model The file to add the keyframes for. Note that the .nif file extension will be replaced with .kf.
+     * @param baseModel The filename of the mObjectRoot, only used for error messages.
     */
-    void addAnimSource(const std::string &model);
+    void addAnimSource(const std::string &model, const std::string& baseModel);
+    void addSingleAnimSource(const std::string &model, const std::string& baseModel);
 
     /** Adds an additional light to the given node using the specified ESM record. */
     void addExtraLight(osg::ref_ptr<osg::Group> parent, const ESM::Light *light);
@@ -315,23 +344,21 @@ protected:
      */
     virtual void addControllers();
 
-    osg::Vec4f getEnchantmentColor(MWWorld::Ptr item);
-
-    void addGlow(osg::ref_ptr<osg::Node> node, osg::Vec4f glowColor);
-
-    /// Set the render bin for this animation's object root. May be customized by subclasses.
-    virtual void setRenderBin();
-
 public:
 
     Animation(const MWWorld::Ptr &ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
+
+    /// Must be thread safe
     virtual ~Animation();
+
+    MWWorld::ConstPtr getPtr() const;
 
     MWWorld::Ptr getPtr();
 
     /// Set active flag on the object skeleton, if one exists.
     /// @see SceneUtil::Skeleton::setActive
-    void setActive(bool active);
+    /// 0 = Inactive, 1 = Active in place, 2 = Active
+    void setActive(int active);
 
     osg::Group* getOrCreateObjectRoot();
 
@@ -347,13 +374,18 @@ public:
      * @param texture override the texture specified in the model's materials - if empty, do not override
      * @note Will not add an effect twice.
      */
-    void addEffect (const std::string& model, int effectId, bool loop = false, const std::string& bonename = "", std::string texture = "");
+    void addEffect (const std::string& model, int effectId, bool loop = false, const std::string& bonename = "", const std::string& texture = "");
     void removeEffect (int effectId);
-    void getLoopingEffects (std::vector<int>& out);
+    void removeEffects ();
+    void getLoopingEffects (std::vector<int>& out) const;
+
+    // Add a spell casting glow to an object. From measuring video taken from the original engine,
+    // the glow seems to be about 1.5 seconds except for telekinesis, which is 1 second.
+    void addSpellCastGlow(const ESM::MagicEffect *effect, float glowDuration = 1.5);
 
     virtual void updatePtr(const MWWorld::Ptr &ptr);
 
-    bool hasAnimation(const std::string &anim);
+    bool hasAnimation(const std::string &anim) const;
 
     // Specifies the axis' to accumulate on. Non-accumulated axis will just
     // move visually, but not affect the actual movement. Each x/y/z value
@@ -384,10 +416,6 @@ public:
               float speedmult, const std::string &start, const std::string &stop,
               float startpoint, size_t loops, bool loopfallback=false);
 
-    /** If the given animation group is currently playing, set its remaining loop count to '0'.
-     */
-    void stopLooping(const std::string& groupName);
-
     /** Adjust the speed multiplier of an already playing animation.
      */
     void adjustSpeedMult (const std::string& groupname, float speedmult);
@@ -404,7 +432,7 @@ public:
      * \param speedmult Stores the animation speed multiplier
      * \return True if the animation is active, false otherwise.
      */
-    bool getInfo(const std::string &groupname, float *complete=NULL, float *speedmult=NULL) const;
+    bool getInfo(const std::string &groupname, float *complete=nullptr, float *speedmult=nullptr) const;
 
     /// Get the absolute position in the animation track of the first text key with the given group.
     float getStartTime(const std::string &groupname) const;
@@ -414,6 +442,8 @@ public:
 
     /// Get the current absolute position in the animation track for the animation that is currently playing from the given group.
     float getCurrentTime(const std::string& groupname) const;
+
+    size_t getCurrentLoopCount(const std::string& groupname) const;
 
     /** Disables the specified animation group;
      * \param groupname Animation group to disable.
@@ -425,16 +455,20 @@ public:
 
     virtual osg::Vec3f runAnimation(float duration);
 
-    /// This is typically called as part of runAnimation, but may be called manually if needed.
-    void updateEffects(float duration);
+    void setLoopingEnabled(const std::string &groupname, bool enabled);
 
-    /// Return a node with the specified name, or NULL if not existing.
+    /// This is typically called as part of runAnimation, but may be called manually if needed.
+    void updateEffects();
+
+    /// Return a node with the specified name, or nullptr if not existing.
     /// @note The matching is case-insensitive.
     const osg::Node* getNode(const std::string& name) const;
 
+    virtual bool useShieldAnimations() const { return false; }
     virtual void showWeapons(bool showWeapon) {}
+    virtual bool getCarriedLeftShown() const { return false; }
     virtual void showCarriedLeft(bool show) {}
-    virtual void setWeaponGroup(const std::string& group) {}
+    virtual void setWeaponGroup(const std::string& group, bool relativeDuration) {}
     virtual void setVampire(bool vampire) {}
     /// A value < 1 makes the animation translucent, 1.f = fully opaque
     void setAlpha(float alpha);
@@ -451,7 +485,16 @@ public:
     virtual void setHeadYaw(float yawRadians);
     virtual float getHeadPitch() const;
     virtual float getHeadYaw() const;
+
+    virtual void setUpperBodyYawRadians(float v) { mUpperBodyYawRadians = v; }
+    virtual void setLegsYawRadians(float v) { mLegsYawRadians = v; }
+    virtual float getUpperBodyYawRadians() const { return mUpperBodyYawRadians; }
+    virtual float getLegsYawRadians() const { return mLegsYawRadians; }
+    virtual void setBodyPitchRadians(float v) { mBodyPitchRadians = v; }
+    virtual float getBodyPitchRadians() const { return mBodyPitchRadians; }
+
     virtual void setAccurateAiming(bool enabled) {}
+    virtual bool canBeHarvested() const { return false; }
 
 private:
     Animation(const Animation&);
@@ -461,6 +504,27 @@ private:
 class ObjectAnimation : public Animation {
 public:
     ObjectAnimation(const MWWorld::Ptr& ptr, const std::string &model, Resource::ResourceSystem* resourceSystem, bool animated, bool allowLight);
+
+    bool canBeHarvested() const;
+};
+
+class UpdateVfxCallback : public osg::NodeCallback
+{
+public:
+    UpdateVfxCallback(EffectParams& params)
+        : mFinished(false)
+        , mParams(params)
+        , mStartingTime(0)
+    {
+    }
+
+    bool mFinished;
+    EffectParams mParams;
+
+    virtual void operator()(osg::Node* node, osg::NodeVisitor* nv);
+
+private:
+    double mStartingTime;
 };
 
 }

@@ -9,9 +9,7 @@ namespace Nif
 
 /// Open a NIF stream. The name is used for error messages.
 NIFFile::NIFFile(Files::IStreamPtr stream, const std::string &name)
-    : ver(0)
-    , filename(name)
-    , mUseSkinning(false)
+    : filename(name)
 {
     parse(stream);
 }
@@ -50,10 +48,13 @@ static std::map<std::string,RecordFactoryEntry> makeFactory()
     newFactory.insert(makeEntry("NiSwitchNode",               &construct <NiSwitchNode>                , RC_NiSwitchNode                  ));
     newFactory.insert(makeEntry("NiLODNode",                  &construct <NiLODNode>                   , RC_NiLODNode                     ));
     newFactory.insert(makeEntry("AvoidNode",                  &construct <NiNode>                      , RC_AvoidNode                     ));
+    newFactory.insert(makeEntry("NiCollisionSwitch",          &construct <NiNode>                      , RC_NiCollisionSwitch             ));
     newFactory.insert(makeEntry("NiBSParticleNode",           &construct <NiNode>                      , RC_NiBSParticleNode              ));
     newFactory.insert(makeEntry("NiBSAnimationNode",          &construct <NiNode>                      , RC_NiBSAnimationNode             ));
     newFactory.insert(makeEntry("NiBillboardNode",            &construct <NiNode>                      , RC_NiBillboardNode               ));
     newFactory.insert(makeEntry("NiTriShape",                 &construct <NiTriShape>                  , RC_NiTriShape                    ));
+    newFactory.insert(makeEntry("NiTriStrips",                &construct <NiTriStrips>                 , RC_NiTriStrips                   ));
+    newFactory.insert(makeEntry("NiLines",                    &construct <NiLines>                     , RC_NiLines                       ));
     newFactory.insert(makeEntry("NiRotatingParticles",        &construct <NiRotatingParticles>         , RC_NiRotatingParticles           ));
     newFactory.insert(makeEntry("NiAutoNormalParticles",      &construct <NiAutoNormalParticles>       , RC_NiAutoNormalParticles         ));
     newFactory.insert(makeEntry("NiCamera",                   &construct <NiCamera>                    , RC_NiCamera                      ));
@@ -73,6 +74,7 @@ static std::map<std::string,RecordFactoryEntry> makeFactory()
     newFactory.insert(makeEntry("NiGeomMorpherController",    &construct <NiGeomMorpherController>     , RC_NiGeomMorpherController       ));
     newFactory.insert(makeEntry("NiKeyframeController",       &construct <NiKeyframeController>        , RC_NiKeyframeController          ));
     newFactory.insert(makeEntry("NiAlphaController",          &construct <NiAlphaController>           , RC_NiAlphaController             ));
+    newFactory.insert(makeEntry("NiRollController",           &construct <NiRollController>            , RC_NiRollController              ));
     newFactory.insert(makeEntry("NiUVController",             &construct <NiUVController>              , RC_NiUVController                ));
     newFactory.insert(makeEntry("NiPathController",           &construct <NiPathController>            , RC_NiPathController              ));
     newFactory.insert(makeEntry("NiMaterialColorController",  &construct <NiMaterialColorController>   , RC_NiMaterialColorController     ));
@@ -89,11 +91,14 @@ static std::map<std::string,RecordFactoryEntry> makeFactory()
     newFactory.insert(makeEntry("NiStringExtraData",          &construct <NiStringExtraData>           , RC_NiStringExtraData             ));
     newFactory.insert(makeEntry("NiGravity",                  &construct <NiGravity>                   , RC_NiGravity                     ));
     newFactory.insert(makeEntry("NiPlanarCollider",           &construct <NiPlanarCollider>            , RC_NiPlanarCollider              ));
+    newFactory.insert(makeEntry("NiSphericalCollider",        &construct <NiSphericalCollider>         , RC_NiSphericalCollider           ));
     newFactory.insert(makeEntry("NiParticleGrowFade",         &construct <NiParticleGrowFade>          , RC_NiParticleGrowFade            ));
     newFactory.insert(makeEntry("NiParticleColorModifier",    &construct <NiParticleColorModifier>     , RC_NiParticleColorModifier       ));
     newFactory.insert(makeEntry("NiParticleRotation",         &construct <NiParticleRotation>          , RC_NiParticleRotation            ));
     newFactory.insert(makeEntry("NiFloatData",                &construct <NiFloatData>                 , RC_NiFloatData                   ));
     newFactory.insert(makeEntry("NiTriShapeData",             &construct <NiTriShapeData>              , RC_NiTriShapeData                ));
+    newFactory.insert(makeEntry("NiTriStripsData",            &construct <NiTriStripsData>             , RC_NiTriStripsData               ));
+    newFactory.insert(makeEntry("NiLinesData",                &construct <NiLinesData>                 , RC_NiLinesData                   ));
     newFactory.insert(makeEntry("NiVisData",                  &construct <NiVisData>                   , RC_NiVisData                     ));
     newFactory.insert(makeEntry("NiColorData",                &construct <NiColorData>                 , RC_NiColorData                   ));
     newFactory.insert(makeEntry("NiPixelData",                &construct <NiPixelData>                 , RC_NiPixelData                   ));
@@ -107,6 +112,8 @@ static std::map<std::string,RecordFactoryEntry> makeFactory()
     newFactory.insert(makeEntry("NiSequenceStreamHelper",     &construct <NiSequenceStreamHelper>      , RC_NiSequenceStreamHelper        ));
     newFactory.insert(makeEntry("NiSourceTexture",            &construct <NiSourceTexture>             , RC_NiSourceTexture               ));
     newFactory.insert(makeEntry("NiSkinInstance",             &construct <NiSkinInstance>              , RC_NiSkinInstance                ));
+    newFactory.insert(makeEntry("NiLookAtController",         &construct <NiLookAtController>          , RC_NiLookAtController            ));
+    newFactory.insert(makeEntry("NiPalette",                  &construct <NiPalette>                   , RC_NiPalette                     ));
     return newFactory;
 }
 
@@ -116,19 +123,13 @@ static const std::map<std::string,RecordFactoryEntry> factories = makeFactory();
 
 std::string NIFFile::printVersion(unsigned int version)
 {
-    union ver_quad
-    {
-        uint32_t full;
-        uint8_t quad[4];
-    } version_out;
-
-    version_out.full = version;
+    int major = (version >> 24) & 0xFF;
+    int minor = (version >> 16) & 0xFF;
+    int patch = (version >> 8) & 0xFF;
+    int rev = version & 0xFF;
 
     std::stringstream stream;
-    stream  << version_out.quad[3] << "."
-            << version_out.quad[2] << "."
-            << version_out.quad[1] << "."
-            << version_out.quad[0];
+    stream << major << "." << minor << "." << patch << "." << rev;
     return stream.str();
 }
 
@@ -139,28 +140,21 @@ void NIFFile::parse(Files::IStreamPtr stream)
     // Check the header string
     std::string head = nif.getVersionString();
     if(head.compare(0, 22, "NetImmerse File Format") != 0)
-        fail("Invalid NIF header:  " + head);
+        fail("Invalid NIF header: " + head);
 
     // Get BCD version
     ver = nif.getUInt();
-    if(ver != VER_MW)
+    // 4.0.0.0 is an older, practically identical version of the format.
+    // It's not used by Morrowind assets but Morrowind supports it.
+    if(ver != NIFStream::generateVersion(4,0,0,0) && ver != VER_MW)
         fail("Unsupported NIF version: " + printVersion(ver));
     // Number of records
     size_t recNum = nif.getInt();
     records.resize(recNum);
 
-    /* The format for 10.0.1.0 seems to be a bit different. After the
-     header, it contains the number of records, r (int), just like
-     4.0.0.2, but following that it contains a short x, followed by x
-     strings. Then again by r shorts, one for each record, giving
-     which of the above strings to use to identify the record. After
-     this follows two ints (zero?) and then the record data. However
-     we do not support or plan to support other versions yet.
-    */
-
     for(size_t i = 0;i < recNum;i++)
     {
-        Record *r = NULL;
+        Record *r = nullptr;
 
         std::string rec = nif.getString();
         if(rec.empty())
@@ -180,7 +174,7 @@ void NIFFile::parse(Files::IStreamPtr stream)
         else
             fail("Unknown record type " + rec);
 
-        assert(r != NULL);
+        assert(r != nullptr);
         assert(r->recType != RC_MISSING);
         r->recName = rec;
         r->recIndex = i;
@@ -201,7 +195,7 @@ void NIFFile::parse(Files::IStreamPtr stream)
         }
         else
         {
-            roots[i] = NULL;
+            roots[i] = nullptr;
             warn("Null Root found");
         }
     }

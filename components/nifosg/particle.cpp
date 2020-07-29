@@ -2,13 +2,16 @@
 
 #include <limits>
 
+#include <osg/Version>
 #include <osg/MatrixTransform>
+#include <osg/Geometry>
 
+#include <components/debug/debuglog.hpp>
+#include <components/misc/rng.hpp>
 #include <components/nif/controlled.hpp>
-#include <components/nif/nifkey.hpp>
 #include <components/nif/data.hpp>
 
-#include "userdata.hpp"
+#include "nodeindexholder.hpp"
 
 namespace NifOsg
 {
@@ -17,15 +20,22 @@ ParticleSystem::ParticleSystem()
     : osgParticle::ParticleSystem()
     , mQuota(std::numeric_limits<int>::max())
 {
+    mNormalArray = new osg::Vec3Array(1);
+    mNormalArray->setBinding(osg::Array::BIND_OVERALL);
+    (*mNormalArray.get())[0] = osg::Vec3(0.3, 0.3, 0.3);
 }
 
 ParticleSystem::ParticleSystem(const ParticleSystem &copy, const osg::CopyOp &copyop)
     : osgParticle::ParticleSystem(copy, copyop)
     , mQuota(copy.mQuota)
 {
+    mNormalArray = new osg::Vec3Array(1);
+    mNormalArray->setBinding(osg::Array::BIND_OVERALL);
+    (*mNormalArray.get())[0] = osg::Vec3(0.3, 0.3, 0.3);
+
     // For some reason the osgParticle constructor doesn't copy the particles
     for (int i=0;i<copy.numParticles()-copy.numDeadParticles();++i)
-        createParticle(copy.getParticle(i));
+        ParticleSystem::createParticle(copy.getParticle(i));
 }
 
 void ParticleSystem::setQuota(int quota)
@@ -37,7 +47,26 @@ osgParticle::Particle* ParticleSystem::createParticle(const osgParticle::Particl
 {
     if (numParticles()-numDeadParticles() < mQuota)
         return osgParticle::ParticleSystem::createParticle(ptemplate);
-    return NULL;
+    return nullptr;
+}
+
+void ParticleSystem::drawImplementation(osg::RenderInfo& renderInfo) const
+{
+    osg::State & state = *renderInfo.getState();
+#if OSG_MIN_VERSION_REQUIRED(3, 5, 6)
+    if(state.useVertexArrayObject(getUseVertexArrayObject()))
+    {
+        state.getCurrentVertexArrayState()->assignNormalArrayDispatcher();
+        state.getCurrentVertexArrayState()->setNormalArray(state, mNormalArray);
+    }
+    else
+    {
+        state.getAttributeDispatchers().activateNormalArray(mNormalArray);
+    }
+#else
+     state.Normal(0.3, 0.3, 0.3);
+#endif
+     osgParticle::ParticleSystem::drawImplementation(renderInfo);
 }
 
 void InverseWorldMatrix::operator()(osg::Node *node, osg::NodeVisitor *nv)
@@ -74,22 +103,29 @@ ParticleShooter::ParticleShooter()
 ParticleShooter::ParticleShooter(const ParticleShooter &copy, const osg::CopyOp &copyop)
     : osgParticle::Shooter(copy, copyop)
 {
-    *this = copy;
+    mMinSpeed = copy.mMinSpeed;
+    mMaxSpeed = copy.mMaxSpeed;
+    mHorizontalDir = copy.mHorizontalDir;
+    mHorizontalAngle = copy.mHorizontalAngle;
+    mVerticalDir = copy.mVerticalDir;
+    mVerticalAngle = copy.mVerticalAngle;
+    mLifetime = copy.mLifetime;
+    mLifetimeRandom = copy.mLifetimeRandom;
 }
 
 void ParticleShooter::shoot(osgParticle::Particle *particle) const
 {
-    float hdir = mHorizontalDir + mHorizontalAngle * (2.f * (std::rand() / static_cast<double>(RAND_MAX)) - 1.f);
-    float vdir = mVerticalDir + mVerticalAngle * (2.f * (std::rand() / static_cast<double>(RAND_MAX)) - 1.f);
+    float hdir = mHorizontalDir + mHorizontalAngle * (2.f * Misc::Rng::rollClosedProbability() - 1.f);
+    float vdir = mVerticalDir + mVerticalAngle * (2.f * Misc::Rng::rollClosedProbability() - 1.f);
 
     osg::Vec3f dir = (osg::Quat(vdir, osg::Vec3f(0,1,0)) * osg::Quat(hdir, osg::Vec3f(0,0,1)))
              * osg::Vec3f(0,0,1);
 
-    float vel = mMinSpeed + (mMaxSpeed - mMinSpeed) * std::rand() / static_cast<float>(RAND_MAX);
+    float vel = mMinSpeed + (mMaxSpeed - mMinSpeed) * Misc::Rng::rollClosedProbability();
     particle->setVelocity(dir * vel);
 
     // Not supposed to set this here, but there doesn't seem to be a better way of doing it
-    particle->setLifeTime(mLifetime + mLifetimeRandom * std::rand() / static_cast<float>(RAND_MAX));
+    particle->setLifeTime(std::max(std::numeric_limits<float>::epsilon(), mLifetime + mLifetimeRandom * Misc::Rng::rollClosedProbability()));
 }
 
 GrowFadeAffector::GrowFadeAffector(float growTime, float fadeTime)
@@ -110,7 +146,9 @@ GrowFadeAffector::GrowFadeAffector()
 GrowFadeAffector::GrowFadeAffector(const GrowFadeAffector& copy, const osg::CopyOp& copyop)
     : osgParticle::Operator(copy, copyop)
 {
-    *this = copy;
+    mGrowTime = copy.mGrowTime;
+    mFadeTime = copy.mFadeTime;
+    mCachedDefaultSize = copy.mCachedDefaultSize;
 }
 
 void GrowFadeAffector::beginOperate(osgParticle::Program *program)
@@ -141,15 +179,19 @@ ParticleColorAffector::ParticleColorAffector()
 ParticleColorAffector::ParticleColorAffector(const ParticleColorAffector &copy, const osg::CopyOp &copyop)
     : osgParticle::Operator(copy, copyop)
 {
-    *this = copy;
+    mData = copy.mData;
 }
 
 void ParticleColorAffector::operate(osgParticle::Particle* particle, double /* dt */)
 {
+    assert(particle->getLifeTime() > 0);
     float time = static_cast<float>(particle->getAge()/particle->getLifeTime());
     osg::Vec4f color = mData.interpKey(time);
+    float alpha = color.a();
+    color.a() = 1.0f;
 
     particle->setColorRange(osgParticle::rangev4(color, color));
+    particle->setAlphaRange(osgParticle::rangef(alpha, alpha));
 }
 
 GravityAffector::GravityAffector(const Nif::NiGravity *gravity)
@@ -170,7 +212,13 @@ GravityAffector::GravityAffector()
 GravityAffector::GravityAffector(const GravityAffector &copy, const osg::CopyOp &copyop)
     : osgParticle::Operator(copy, copyop)
 {
-    *this = copy;
+    mForce = copy.mForce;
+    mType = copy.mType;
+    mPosition = copy.mPosition;
+    mDirection = copy.mDirection;
+    mDecay = copy.mDecay;
+    mCachedWorldPosition = copy.mCachedWorldPosition;
+    mCachedWorldDirection = copy.mCachedWorldDirection;
 }
 
 void GravityAffector::beginOperate(osgParticle::Program* program)
@@ -230,7 +278,7 @@ Emitter::Emitter(const Emitter &copy, const osg::CopyOp &copyop)
     , mPlacer(copy.mPlacer)
     , mShooter(copy.mShooter)
     // need a deep copy because the remainder is stored in the object
-    , mCounter(osg::clone(copy.mCounter.get(), osg::CopyOp::DEEP_COPY_ALL))
+    , mCounter(static_cast<osgParticle::Counter*>(copy.mCounter->clone(osg::CopyOp::DEEP_COPY_ALL)))
 {
 }
 
@@ -275,7 +323,8 @@ void Emitter::emitParticles(double dt)
 
     if (!mTargets.empty())
     {
-        int randomRecIndex = mTargets[(std::rand() / (static_cast<double>(RAND_MAX)+1.0)) * mTargets.size()];
+        int randomIndex = Misc::Rng::rollClosedProbability() * (mTargets.size() - 1);
+        int randomRecIndex = mTargets[randomIndex];
 
         // we could use a map here for faster lookup
         FindGroupByRecIndex visitor(randomRecIndex);
@@ -283,7 +332,7 @@ void Emitter::emitParticles(double dt)
 
         if (!visitor.mFound)
         {
-            std::cerr << "Emitter: Can't find emitter node" << randomRecIndex << std::endl;
+            Log(Debug::Info) << "Can't find emitter node" << randomRecIndex;
             return;
         }
 
@@ -310,17 +359,32 @@ void Emitter::emitParticles(double dt)
 
 FindGroupByRecIndex::FindGroupByRecIndex(int recIndex)
     : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
-    , mFound(NULL)
+    , mFound(nullptr)
     , mRecIndex(recIndex)
 {
 }
 
-void FindGroupByRecIndex::apply(osg::Node &searchNode)
+void FindGroupByRecIndex::apply(osg::Node &node)
+{
+    applyNode(node);
+}
+
+void FindGroupByRecIndex::apply(osg::MatrixTransform &node)
+{
+    applyNode(node);
+}
+
+void FindGroupByRecIndex::apply(osg::Geometry &node)
+{
+    applyNode(node);
+}
+
+void FindGroupByRecIndex::applyNode(osg::Node &searchNode)
 {
     if (searchNode.getUserDataContainer() && searchNode.getUserDataContainer()->getNumUserObjects())
     {
-        NodeUserData* holder = dynamic_cast<NodeUserData*>(searchNode.getUserDataContainer()->getUserObject(0));
-        if (holder && holder->mIndex == mRecIndex)
+        NodeIndexHolder* holder = dynamic_cast<NodeIndexHolder*>(searchNode.getUserDataContainer()->getUserObject(0));
+        if (holder && holder->getIndex() == mRecIndex)
         {
             osg::Group* group = searchNode.asGroup();
             if (!group)
@@ -372,6 +436,75 @@ void PlanarCollider::operate(osgParticle::Particle *particle, double dt)
             osg::Vec3 reflectedVelocity = particle->getVelocity() - mPlaneInParticleSpace.getNormal() * (2 * dotproduct);
             reflectedVelocity *= mBounceFactor;
             particle->setVelocity(reflectedVelocity);
+        }
+    }
+}
+
+SphericalCollider::SphericalCollider(const Nif::NiSphericalCollider* collider)
+    : mBounceFactor(collider->mBounceFactor),
+      mSphere(collider->mCenter, collider->mRadius)
+{
+}
+
+SphericalCollider::SphericalCollider()
+    : mBounceFactor(1.0f)
+{
+
+}
+
+SphericalCollider::SphericalCollider(const SphericalCollider& copy, const osg::CopyOp& copyop)
+    : osgParticle::Operator(copy, copyop)
+    , mBounceFactor(copy.mBounceFactor)
+    , mSphere(copy.mSphere)
+    , mSphereInParticleSpace(copy.mSphereInParticleSpace)
+{
+
+}
+
+void SphericalCollider::beginOperate(osgParticle::Program* program)
+{
+    mSphereInParticleSpace = mSphere;
+    if (program->getReferenceFrame() == osgParticle::ParticleProcessor::ABSOLUTE_RF)
+        mSphereInParticleSpace.center() = program->transformLocalToWorld(mSphereInParticleSpace.center());
+}
+
+void SphericalCollider::operate(osgParticle::Particle* particle, double dt)
+{
+    osg::Vec3f cent = (particle->getPosition() - mSphereInParticleSpace.center()); // vector from sphere center to particle
+
+    bool insideSphere = cent.length2() <= mSphereInParticleSpace.radius2();
+
+    if (insideSphere
+            || (cent * particle->getVelocity() < 0.0f)) // if outside, make sure the particle is flying towards the sphere
+    {
+        // Collision test (finding point of contact) is performed by solving a quadratic equation:
+        // ||vec(cent) + vec(vel)*k|| = R      /^2
+        // k^2 + 2*k*(vec(cent)*vec(vel))/||vec(vel)||^2 + (||vec(cent)||^2 - R^2)/||vec(vel)||^2 = 0
+
+        float b = -(cent * particle->getVelocity()) / particle->getVelocity().length2();
+
+        osg::Vec3f u = cent + particle->getVelocity() * b;
+
+        if (insideSphere
+                || (u.length2() < mSphereInParticleSpace.radius2()))
+        {
+            float d = (mSphereInParticleSpace.radius2() - u.length2()) / particle->getVelocity().length2();
+            float k = insideSphere ? (std::sqrt(d) + b) : (b - std::sqrt(d));
+
+            if (k < dt)
+            {
+                // collision detected; reflect off the tangent plane
+                osg::Vec3f contact = particle->getPosition() + particle->getVelocity() * k;
+
+                osg::Vec3 normal = (contact - mSphereInParticleSpace.center());
+                normal.normalize();
+
+                float dotproduct = particle->getVelocity() * normal;
+
+                osg::Vec3 reflectedVelocity = particle->getVelocity() - normal * (2 * dotproduct);
+                reflectedVelocity *= mBounceFactor;
+                particle->setVelocity(reflectedVelocity);
+            }
         }
     }
 }

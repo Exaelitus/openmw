@@ -7,7 +7,11 @@
 #include <map>
 #include <set>
 
+#include <MyGUI_KeyCode.h>
+
 #include "../mwgui/mode.hpp"
+
+#include <components/sdlutil/events.hpp>
 
 namespace Loading
 {
@@ -72,6 +76,8 @@ namespace MWGui
         ShowInDialogueMode_Only,
         ShowInDialogueMode_Never
     };
+
+    struct TextColours;
 }
 
 namespace SFO
@@ -82,7 +88,7 @@ namespace SFO
 namespace MWBase
 {
     /// \brief Interface for widnow manager (implemented in MWGui)
-    class WindowManager
+    class WindowManager : public SDLUtil::WindowListener
     {
             WindowManager (const WindowManager&);
             ///< not implemented
@@ -98,23 +104,17 @@ namespace MWBase
 
             virtual ~WindowManager() {}
 
-            /**
-             * Should be called each frame to update windows/gui elements.
-             * This could mean updating sizes of gui elements or opening
-             * new dialogs.
-             */
-            virtual void update() = 0;
-
             /// @note This method will block until the video finishes playing
             /// (and will continually update the window while doing so)
             virtual void playVideo(const std::string& name, bool allowSkipping) = 0;
 
             virtual void setNewGame(bool newgame) = 0;
 
+            virtual void pushGuiMode (MWGui::GuiMode mode, const MWWorld::Ptr& arg) = 0;
             virtual void pushGuiMode (MWGui::GuiMode mode) = 0;
-            virtual void popGuiMode() = 0;
+            virtual void popGuiMode(bool noSound=false) = 0;
 
-            virtual void removeGuiMode (MWGui::GuiMode mode) = 0;
+            virtual void removeGuiMode (MWGui::GuiMode mode, bool noSound=false) = 0;
             ///< can be anywhere in the stack
 
             virtual void goToJail(int days) = 0;
@@ -142,39 +142,22 @@ namespace MWBase
             virtual bool isAllowed (MWGui::GuiWindow wnd) const = 0;
 
             /// \todo investigate, if we really need to expose every single lousy UI element to the outside world
-            virtual MWGui::DialogueWindow* getDialogueWindow() = 0;
             virtual MWGui::InventoryWindow* getInventoryWindow() = 0;
             virtual MWGui::CountDialog* getCountDialog() = 0;
             virtual MWGui::ConfirmationDialog* getConfirmationDialog() = 0;
             virtual MWGui::TradeWindow* getTradeWindow() = 0;
 
             /// Make the player use an item, while updating GUI state accordingly
-            virtual void useItem(const MWWorld::Ptr& item) = 0;
+            virtual void useItem(const MWWorld::Ptr& item, bool force=false) = 0;
 
             virtual void updateSpellWindow() = 0;
 
             virtual void setConsoleSelectedObject(const MWWorld::Ptr& object) = 0;
 
-            /// Set value for the given ID.
-            virtual void setValue (const std::string& id, const MWMechanics::AttributeValue& value) = 0;
-            virtual void setValue (int parSkill, const MWMechanics::SkillValue& value) = 0;
-            virtual void setValue (const std::string& id, const MWMechanics::DynamicStat<float>& value) = 0;
-            virtual void setValue (const std::string& id, const std::string& value) = 0;
-            virtual void setValue (const std::string& id, int value) = 0;
-
             /// Set time left for the player to start drowning (update the drowning bar)
             /// @param time time left to start drowning
             /// @param maxTime how long we can be underwater (in total) until drowning starts
             virtual void setDrowningTimeLeft (float time, float maxTime) = 0;
-
-            virtual void setPlayerClass (const ESM::Class &class_) = 0;
-            ///< set current class of player
-
-            virtual void configureSkills (const SkillList& major, const SkillList& minor) = 0;
-            ///< configure skill groups, each set contains the skill ID for that group.
-
-            virtual void updateSkillArea() = 0;
-            ///< update display of skills, factions, birth sign, reputation and bounty
 
             virtual void changeCell(const MWWorld::CellStore* cell) = 0;
             ///< change the active cell
@@ -183,6 +166,7 @@ namespace MWBase
             virtual void setFocusObjectScreenCoords(float min_x, float min_y, float max_x, float max_y) = 0;
 
             virtual void setCursorVisible(bool visible) = 0;
+            virtual void setCursorActive(bool active) = 0;
             virtual void getMousePosition(int &x, int &y) = 0;
             virtual void getMousePosition(float &x, float &y) = 0;
             virtual void setDragDrop(bool dragDrop) = 0;
@@ -210,18 +194,24 @@ namespace MWBase
             virtual void setSpellVisibility(bool visible) = 0;
             virtual void setSneakVisibility(bool visible) = 0;
 
-            virtual void activateQuickKey  (int index) = 0;
+            /// activate selected quick key
+            virtual void activateQuickKey (int index) = 0;
+            /// update activated quick key state (if action executing was delayed for some reason)
+            virtual void updateActivatedQuickKey () = 0;
 
             virtual std::string getSelectedSpell() = 0;
             virtual void setSelectedSpell(const std::string& spellId, int successChancePercent) = 0;
             virtual void setSelectedEnchantItem(const MWWorld::Ptr& item) = 0;
+            virtual const MWWorld::Ptr& getSelectedEnchantItem() const = 0;
             virtual void setSelectedWeapon(const MWWorld::Ptr& item) = 0;
+            virtual const MWWorld::Ptr& getSelectedWeapon() const = 0;
+            virtual int getFontHeight() const = 0;
             virtual void unsetSelectedSpell() = 0;
             virtual void unsetSelectedWeapon() = 0;
 
             virtual void showCrosshair(bool show) = 0;
             virtual bool getSubtitlesEnabled() = 0;
-            virtual bool toggleGui() = 0;
+            virtual bool toggleHud() = 0;
 
             virtual void disallowMouse() = 0;
             virtual void allowMouse() = 0;
@@ -233,7 +223,7 @@ namespace MWBase
             virtual void removeDialog(MWGui::Layout* dialog) = 0;
 
             ///Gracefully attempts to exit the topmost GUI mode
-            /** No guarentee of actually closing the window **/
+            /** No guarantee of actually closing the window **/
             virtual void exitCurrentGuiMode() = 0;
 
             virtual void messageBox (const std::string& message, enum MWGui::ShowInDialogueMode showInDialogueMode = MWGui::ShowInDialogueMode_IfPossible) = 0;
@@ -245,13 +235,9 @@ namespace MWBase
             /// returns the index of the pressed button or -1 if no button was pressed (->MessageBoxmanager->InteractiveMessageBox)
             virtual int readPressedButton() = 0;
 
-            virtual void onFrame (float frameDuration) = 0;
+            virtual void update (float duration) = 0;
 
-            /// \todo get rid of this stuff. Move it to the respective UI element classes, if needed.
-            virtual std::map<int, MWMechanics::SkillValue > getPlayerSkillValues() = 0;
-            virtual std::map<int, MWMechanics::AttributeValue > getPlayerAttributeValues() = 0;
-            virtual SkillList getPlayerMinorSkills() = 0;
-            virtual SkillList getPlayerMajorSkills() = 0;
+            virtual void updateConsoleObjectPtr(const MWWorld::Ptr& currentPtr, const MWWorld::Ptr& newPtr) = 0;
 
             /**
              * Fetches a GMST string from the store, if there is no setting with the given
@@ -264,8 +250,6 @@ namespace MWBase
 
             virtual void processChangedSettings(const std::set< std::pair<std::string, std::string> >& changed) = 0;
 
-            virtual void windowResized(int x, int y) = 0;
-
             virtual void executeInConsole (const std::string& path) = 0;
 
             virtual void enableRest() = 0;
@@ -275,31 +259,20 @@ namespace MWBase
             virtual bool getPlayerSleeping() = 0;
             virtual void wakeUpPlayer() = 0;
 
-            virtual void showCompanionWindow(MWWorld::Ptr actor) = 0;
-            virtual void startSpellMaking(MWWorld::Ptr actor) = 0;
-            virtual void startEnchanting(MWWorld::Ptr actor) = 0;
-            virtual void startRecharge(MWWorld::Ptr soulgem) = 0;
-            virtual void startSelfEnchanting(MWWorld::Ptr soulgem) = 0;
-            virtual void startTraining(MWWorld::Ptr actor) = 0;
-            virtual void startRepair(MWWorld::Ptr actor) = 0;
-            virtual void startRepairItem(MWWorld::Ptr item) = 0;
-            virtual void startTravel(const MWWorld::Ptr& actor) = 0;
-            virtual void startSpellBuying(const MWWorld::Ptr& actor) = 0;
-            virtual void startTrade(const MWWorld::Ptr& actor) = 0;
-            virtual void openContainer(const MWWorld::Ptr& container, bool loot) = 0;
-            virtual void showBook(const MWWorld::Ptr& item, bool showTakeButton) = 0;
-            virtual void showScroll(const MWWorld::Ptr& item, bool showTakeButton) = 0;
-
             virtual void showSoulgemDialog (MWWorld::Ptr item) = 0;
 
             virtual void changePointer (const std::string& name) = 0;
 
             virtual void setEnemy (const MWWorld::Ptr& enemy) = 0;
 
+            virtual int getMessagesCount() const = 0;
+
             virtual const Translation::Storage& getTranslationDataStorage() const = 0;
 
             /// Warning: do not use MyGUI::InputManager::setKeyFocusWidget directly. Instead use this.
             virtual void setKeyFocusWidget (MyGUI::Widget* widget) = 0;
+
+            virtual void loadUserFonts() = 0;
 
             virtual Loading::Listener* getLoadingScreen() = 0;
 
@@ -329,19 +302,21 @@ namespace MWBase
             virtual void removeCurrentModal(MWGui::WindowModal* input) = 0;
 
             virtual void pinWindow (MWGui::GuiWindow window) = 0;
+            virtual void toggleMaximized(MWGui::Layout *layout) = 0;
 
             /// Fade the screen in, over \a time seconds
-            virtual void fadeScreenIn(const float time, bool clearQueue=true) = 0;
+            virtual void fadeScreenIn(const float time, bool clearQueue=true, float delay=0.f) = 0;
             /// Fade the screen out to black, over \a time seconds
-            virtual void fadeScreenOut(const float time, bool clearQueue=true) = 0;
+            virtual void fadeScreenOut(const float time, bool clearQueue=true, float delay=0.f) = 0;
             /// Fade the screen to a specified percentage of black, over \a time seconds
-            virtual void fadeScreenTo(const int percent, const float time, bool clearQueue=true) = 0;
+            virtual void fadeScreenTo(const int percent, const float time, bool clearQueue=true, float delay=0.f) = 0;
             /// Darken the screen to a specified percentage
             virtual void setBlindness(const int percent) = 0;
 
             virtual void activateHitOverlay(bool interrupt=true) = 0;
             virtual void setWerewolfOverlay(bool set) = 0;
 
+            virtual void toggleConsole() = 0;
             virtual void toggleDebugWindow() = 0;
 
             /// Cycle to next or previous spell
@@ -349,14 +324,30 @@ namespace MWBase
             /// Cycle to next or previous weapon
             virtual void cycleWeapon(bool next) = 0;
 
+            virtual void playSound(const std::string& soundId, float volume = 1.f, float pitch = 1.f) = 0;
+
             // In WindowManager for now since there isn't a VFS singleton
             virtual std::string correctIconPath(const std::string& path) = 0;
-            virtual std::string correctBookartPath(const std::string& path, int width, int height) = 0;
+            virtual std::string correctBookartPath(const std::string& path, int width, int height, bool* exists = nullptr) = 0;
             virtual std::string correctTexturePath(const std::string& path) = 0;
             virtual bool textureExists(const std::string& path) = 0;
 
+            virtual void addCell(MWWorld::CellStore* cell) = 0;
             virtual void removeCell(MWWorld::CellStore* cell) = 0;
             virtual void writeFog(MWWorld::CellStore* cell) = 0;
+
+            virtual const MWGui::TextColours& getTextColours() = 0;
+
+            virtual bool injectKeyPress(MyGUI::KeyCode key, unsigned int text, bool repeat) = 0;
+            virtual bool injectKeyRelease(MyGUI::KeyCode key) = 0;
+
+            virtual void windowVisibilityChange(bool visible) = 0;
+            virtual void windowResized(int x, int y) = 0;
+            virtual void windowClosed() = 0;
+            virtual bool isWindowVisible() = 0;
+
+            virtual void watchActor(const MWWorld::Ptr& ptr) = 0;
+            virtual MWWorld::Ptr getWatchedActor() const = 0;
     };
 }
 

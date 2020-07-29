@@ -12,7 +12,6 @@ namespace MWGui
       GM_Companion,
       GM_MainMenu,      // Main menu mode
 
-      GM_Console,       // Console mode
       GM_Journal,       // Journal mode
 
       GM_Scroll,        // Read scroll
@@ -23,7 +22,6 @@ namespace MWGui
       GM_Dialogue,      // NPC interaction
       GM_Barter,
       GM_Rest,
-      GM_RestBed,
       GM_SpellBuying,
       GM_Travel,
       GM_SpellCreation,

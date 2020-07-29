@@ -15,6 +15,7 @@ namespace MWGui
 
         bool filterAccepts (const ItemStack& item);
 
+        bool allowedToUseItems() const;
         virtual ItemStack getItem (ModelIndex index);
         virtual size_t getItemCount();
 
@@ -24,9 +25,15 @@ namespace MWGui
 
         void setCategory (int category);
         void setFilter (int filter);
+        void setNameFilter (const std::string& filter);
+        void setEffectFilter (const std::string& filter);
 
         /// Use ItemStack::Type for sorting?
         void setSortByType(bool sort) { mSortByType = sort; }
+
+        void onClose();
+        bool onDropItem(const MWWorld::Ptr &item, int count);
+        bool onTakeItem(const MWWorld::Ptr &item, int count);
 
         static const int Category_Weapon = (1<<1);
         static const int Category_Apparel = (1<<2);
@@ -39,6 +46,9 @@ namespace MWGui
         static const int Filter_OnlyEnchantable = (1<<2);
         static const int Filter_OnlyChargedSoulstones = (1<<3);
         static const int Filter_OnlyUsableItems = (1<<4); // Only items with a Use action
+        static const int Filter_OnlyRepairable = (1<<5);
+        static const int Filter_OnlyRechargable = (1<<6);
+        static const int Filter_OnlyRepairTools = (1<<7);
 
 
     private:
@@ -49,6 +59,9 @@ namespace MWGui
         int mCategory;
         int mFilter;
         bool mSortByType;
+
+        std::string mNameFilter; // filter by item name
+        std::string mEffectFilter; // filter by magic effect
     };
 
 }

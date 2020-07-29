@@ -303,7 +303,7 @@ void CSVWorld::RegionMap::view()
         hint << cellId;
     }
 
-    emit editRequest (CSMWorld::UniversalId (CSMWorld::UniversalId::Type_Scene, "sys::default"),
+    emit editRequest (CSMWorld::UniversalId (CSMWorld::UniversalId::Type_Scene, ESM::CellId::sDefaultWorldspace),
         hint.str());
 }
 
@@ -343,7 +343,7 @@ std::vector< CSMWorld::UniversalId > CSVWorld::RegionMap::getDraggedRecords() co
 {
     QModelIndexList selected(getSelectedCells(true, false));
     std::vector<CSMWorld::UniversalId> ids;
-    foreach (QModelIndex it, selected)
+    for (const QModelIndex& it : selected)
     {
         ids.push_back(
             CSMWorld::UniversalId(
@@ -351,7 +351,7 @@ std::vector< CSMWorld::UniversalId > CSVWorld::RegionMap::getDraggedRecords() co
                 model()->data(it, CSMWorld::RegionMap::Role_CellId).toString().toUtf8().constData()));
     }
     selected = getSelectedCells(false, true);
-    foreach (QModelIndex it, selected)
+    for (const QModelIndex& it : selected)
     {
         ids.push_back(
             CSMWorld::UniversalId(

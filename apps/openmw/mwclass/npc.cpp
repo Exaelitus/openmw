@@ -1,12 +1,15 @@
-#include "npc.hpp"
+﻿#include "npc.hpp"
 
 #include <memory>
 
+#include <components/misc/constants.hpp>
 #include <components/misc/rng.hpp>
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm/loadmgef.hpp>
 #include <components/esm/loadnpc.hpp>
 #include <components/esm/npcstate.hpp>
+#include <components/settings/settings.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -23,7 +26,7 @@
 #include "../mwmechanics/combat.hpp"
 #include "../mwmechanics/autocalcspell.hpp"
 #include "../mwmechanics/difficultyscaling.hpp"
-#include "../mwmechanics/character.hpp"
+#include "../mwmechanics/weapontype.hpp"
 #include "../mwmechanics/actorutil.hpp"
 
 #include "../mwworld/ptr.hpp"
@@ -34,6 +37,7 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwphysics/physicssystem.hpp"
 #include "../mwworld/cellstore.hpp"
+#include "../mwworld/localscripts.hpp"
 
 #include "../mwrender/objects.hpp"
 #include "../mwrender/renderinginterface.hpp"
@@ -123,8 +127,8 @@ namespace
         }
 
         // initial health
-        int strength = creatureStats.getAttribute(ESM::Attribute::Strength).getBase();
-        int endurance = creatureStats.getAttribute(ESM::Attribute::Endurance).getBase();
+        float strength = creatureStats.getAttribute(ESM::Attribute::Strength).getBase();
+        float endurance = creatureStats.getAttribute(ESM::Attribute::Endurance).getBase();
 
         int multiplier = 3;
 
@@ -154,7 +158,7 @@ namespace
      *
      * and by adding class, race, specialization bonus.
      */
-    void autoCalculateSkills(const ESM::NPC* npc, MWMechanics::NpcStats& npcStats, const MWWorld::Ptr& ptr)
+    void autoCalculateSkills(const ESM::NPC* npc, MWMechanics::NpcStats& npcStats, const MWWorld::Ptr& ptr, bool spellsInitialised)
     {
         const ESM::Class *class_ =
             MWBase::Environment::get().getWorld()->getStore().get<ESM::Class>().find(npc->mClass);
@@ -231,9 +235,11 @@ namespace
         for (int i=0; i<ESM::Attribute::Length; ++i)
             attributes[i] = npcStats.getAttribute(i).getBase();
 
-        std::vector<std::string> spells = MWMechanics::autoCalcNpcSpells(skills, attributes, race);
-        for (std::vector<std::string>::iterator it = spells.begin(); it != spells.end(); ++it)
-            npcStats.getSpells().add(*it);
+        if (!spellsInitialised)
+        {
+            std::vector<std::string> spells = MWMechanics::autoCalcNpcSpells(skills, attributes, race);
+            npcStats.getSpells().addAllToInstance(spells);
+        }
     }
 }
 
@@ -303,72 +309,71 @@ namespace MWClass
     {
         if (!ptr.getRefData().getCustomData())
         {
-            std::auto_ptr<NpcCustomData> data(new NpcCustomData);
+            std::unique_ptr<NpcCustomData> data(new NpcCustomData);
 
             MWWorld::LiveCellRef<ESM::NPC> *ref = ptr.get<ESM::NPC>();
+
+            bool spellsInitialised = data->mNpcStats.getSpells().setSpells(ref->mBase->mId);
 
             // creature stats
             int gold=0;
             if(ref->mBase->mNpdtType != ESM::NPC::NPC_WITH_AUTOCALCULATED_STATS)
             {
-                gold = ref->mBase->mNpdt52.mGold;
+                gold = ref->mBase->mNpdt.mGold;
 
                 for (unsigned int i=0; i< ESM::Skill::Length; ++i)
-                    data->mNpcStats.getSkill (i).setBase (ref->mBase->mNpdt52.mSkills[i]);
+                    data->mNpcStats.getSkill (i).setBase (ref->mBase->mNpdt.mSkills[i]);
 
-                data->mNpcStats.setAttribute(ESM::Attribute::Strength, ref->mBase->mNpdt52.mStrength);
-                data->mNpcStats.setAttribute(ESM::Attribute::Intelligence, ref->mBase->mNpdt52.mIntelligence);
-                data->mNpcStats.setAttribute(ESM::Attribute::Willpower, ref->mBase->mNpdt52.mWillpower);
-                data->mNpcStats.setAttribute(ESM::Attribute::Agility, ref->mBase->mNpdt52.mAgility);
-                data->mNpcStats.setAttribute(ESM::Attribute::Speed, ref->mBase->mNpdt52.mSpeed);
-                data->mNpcStats.setAttribute(ESM::Attribute::Endurance, ref->mBase->mNpdt52.mEndurance);
-                data->mNpcStats.setAttribute(ESM::Attribute::Personality, ref->mBase->mNpdt52.mPersonality);
-                data->mNpcStats.setAttribute(ESM::Attribute::Luck, ref->mBase->mNpdt52.mLuck);
+                data->mNpcStats.setAttribute(ESM::Attribute::Strength, ref->mBase->mNpdt.mStrength);
+                data->mNpcStats.setAttribute(ESM::Attribute::Intelligence, ref->mBase->mNpdt.mIntelligence);
+                data->mNpcStats.setAttribute(ESM::Attribute::Willpower, ref->mBase->mNpdt.mWillpower);
+                data->mNpcStats.setAttribute(ESM::Attribute::Agility, ref->mBase->mNpdt.mAgility);
+                data->mNpcStats.setAttribute(ESM::Attribute::Speed, ref->mBase->mNpdt.mSpeed);
+                data->mNpcStats.setAttribute(ESM::Attribute::Endurance, ref->mBase->mNpdt.mEndurance);
+                data->mNpcStats.setAttribute(ESM::Attribute::Personality, ref->mBase->mNpdt.mPersonality);
+                data->mNpcStats.setAttribute(ESM::Attribute::Luck, ref->mBase->mNpdt.mLuck);
 
-                data->mNpcStats.setHealth (ref->mBase->mNpdt52.mHealth);
-                data->mNpcStats.setMagicka (ref->mBase->mNpdt52.mMana);
-                data->mNpcStats.setFatigue (ref->mBase->mNpdt52.mFatigue);
+                data->mNpcStats.setHealth (ref->mBase->mNpdt.mHealth);
+                data->mNpcStats.setMagicka (ref->mBase->mNpdt.mMana);
+                data->mNpcStats.setFatigue (ref->mBase->mNpdt.mFatigue);
 
-                data->mNpcStats.setLevel(ref->mBase->mNpdt52.mLevel);
-                data->mNpcStats.setBaseDisposition(ref->mBase->mNpdt52.mDisposition);
-                data->mNpcStats.setReputation(ref->mBase->mNpdt52.mReputation);
+                data->mNpcStats.setLevel(ref->mBase->mNpdt.mLevel);
+                data->mNpcStats.setBaseDisposition(ref->mBase->mNpdt.mDisposition);
+                data->mNpcStats.setReputation(ref->mBase->mNpdt.mReputation);
 
                 data->mNpcStats.setNeedRecalcDynamicStats(false);
             }
             else
             {
-                gold = ref->mBase->mNpdt12.mGold;
+                gold = ref->mBase->mNpdt.mGold;
 
                 for (int i=0; i<3; ++i)
                     data->mNpcStats.setDynamic (i, 10);
 
-                data->mNpcStats.setLevel(ref->mBase->mNpdt12.mLevel);
-                data->mNpcStats.setBaseDisposition(ref->mBase->mNpdt12.mDisposition);
-                data->mNpcStats.setReputation(ref->mBase->mNpdt12.mReputation);
+                data->mNpcStats.setLevel(ref->mBase->mNpdt.mLevel);
+                data->mNpcStats.setBaseDisposition(ref->mBase->mNpdt.mDisposition);
+                data->mNpcStats.setReputation(ref->mBase->mNpdt.mReputation);
 
                 autoCalculateAttributes(ref->mBase, data->mNpcStats);
-                autoCalculateSkills(ref->mBase, data->mNpcStats, ptr);
+                autoCalculateSkills(ref->mBase, data->mNpcStats, ptr, spellsInitialised);
 
                 data->mNpcStats.setNeedRecalcDynamicStats(true);
             }
 
+            // Persistent actors with 0 health do not play death animation
+            if (data->mNpcStats.isDead())
+                data->mNpcStats.setDeathAnimationFinished(isPersistent(ptr));
+
             // race powers
             const ESM::Race *race = MWBase::Environment::get().getWorld()->getStore().get<ESM::Race>().find(ref->mBase->mRace);
-            for (std::vector<std::string>::const_iterator iter (race->mPowers.mList.begin());
-                iter!=race->mPowers.mList.end(); ++iter)
-            {
-                if (const ESM::Spell* spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(*iter))
-                    data->mNpcStats.getSpells().add (spell);
-                else
-                    std::cerr << "Warning: ignoring nonexistent race power '" << *iter << "' on NPC '" << ref->mBase->mId << "'" << std::endl;
-            }
+            data->mNpcStats.getSpells().addAllToInstance(race->mPowers.mList);
 
             if (!ref->mBase->mFaction.empty())
             {
                 static const int iAutoRepFacMod = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>()
-                        .find("iAutoRepFacMod")->getInt();
+                        .find("iAutoRepFacMod")->mValue.getInteger();
                 static const int iAutoRepLevMod = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>()
-                        .find("iAutoRepLevMod")->getInt();
+                        .find("iAutoRepLevMod")->mValue.getInteger();
                 int rank = ref->mBase->getFactionRank();
 
                 data->mNpcStats.setReputation(iAutoRepFacMod * (rank+1) + iAutoRepLevMod * (data->mNpcStats.getLevel()-1));
@@ -382,17 +387,8 @@ namespace MWClass
             data->mNpcStats.setAiSetting (MWMechanics::CreatureStats::AI_Alarm, ref->mBase->mAiData.mAlarm);
 
             // spells
-            for (std::vector<std::string>::const_iterator iter (ref->mBase->mSpells.mList.begin());
-                iter!=ref->mBase->mSpells.mList.end(); ++iter)
-            {
-                if (const ESM::Spell* spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(*iter))
-                    data->mNpcStats.getSpells().add (spell);
-                else
-                {
-                    /// \todo add option to make this a fatal error message pop-up, but default to warning for vanilla compatibility
-                    std::cerr << "Warning: ignoring nonexistent spell '" << *iter << "' on NPC '" << ref->mBase->mId << "'" << std::endl;
-                }
-            }
+            if (!spellsInitialised)
+                data->mNpcStats.getSpells().addAllToInstance(ref->mBase->mSpells.mList);
 
             // inventory
             // setting ownership is used to make the NPC auto-equip his initial equipment only, and not bartered items
@@ -403,7 +399,7 @@ namespace MWClass
             // store
             ptr.getRefData().setCustomData (data.release());
 
-            getInventoryStore(ptr).autoEquip(ptr); 
+            getInventoryStore(ptr).autoEquip(ptr);
         }
     }
 
@@ -462,41 +458,38 @@ namespace MWClass
 
         // FIXME: use const version of InventoryStore functions once they are available
         // preload equipped items
-        if (ptr.getClass().hasInventoryStore(ptr))
+        const MWWorld::InventoryStore& invStore = getInventoryStore(ptr);
+        for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
         {
-            MWWorld::InventoryStore& invStore = ptr.getClass().getInventoryStore(ptr);
-            for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
+            MWWorld::ConstContainerStoreIterator equipped = invStore.getSlot(slot);
+            if (equipped != invStore.end())
             {
-                MWWorld::ContainerStoreIterator equipped = invStore.getSlot(slot);
-                if (equipped != invStore.end())
+                std::vector<ESM::PartReference> parts;
+                if(equipped->getTypeName() == typeid(ESM::Clothing).name())
                 {
-                    std::vector<ESM::PartReference> parts;
-                    if(equipped->getTypeName() == typeid(ESM::Clothing).name())
-                    {
-                        const ESM::Clothing *clothes = equipped->get<ESM::Clothing>()->mBase;
-                        parts = clothes->mParts.mParts;
-                    }
-                    else if(equipped->getTypeName() == typeid(ESM::Armor).name())
-                    {
-                        const ESM::Armor *armor = equipped->get<ESM::Armor>()->mBase;
-                        parts = armor->mParts.mParts;
-                    }
-                    else
-                    {
-                        std::string model = equipped->getClass().getModel(*equipped);
-                        if (!model.empty())
-                            models.push_back(model);
-                    }
+                    const ESM::Clothing *clothes = equipped->get<ESM::Clothing>()->mBase;
+                    parts = clothes->mParts.mParts;
+                }
+                else if(equipped->getTypeName() == typeid(ESM::Armor).name())
+                {
+                    const ESM::Armor *armor = equipped->get<ESM::Armor>()->mBase;
+                    parts = armor->mParts.mParts;
+                }
+                else
+                {
+                    std::string model = equipped->getClass().getModel(*equipped);
+                    if (!model.empty())
+                        models.push_back(model);
+                }
 
-                    for (std::vector<ESM::PartReference>::const_iterator it = parts.begin(); it != parts.end(); ++it)
-                    {
-                        std::string partname = female ? it->mFemale : it->mMale;
-                        if (partname.empty())
-                            partname = female ? it->mMale : it->mFemale;
-                        const ESM::BodyPart* part = MWBase::Environment::get().getWorld()->getStore().get<ESM::BodyPart>().search(partname);
-                        if (part && !part->mModel.empty())
-                            models.push_back("meshes/"+part->mModel);
-                    }
+                for (std::vector<ESM::PartReference>::const_iterator it = parts.begin(); it != parts.end(); ++it)
+                {
+                    std::string partname = female ? it->mFemale : it->mMale;
+                    if (partname.empty())
+                        partname = female ? it->mMale : it->mFemale;
+                    const ESM::BodyPart* part = MWBase::Environment::get().getWorld()->getStore().get<ESM::BodyPart>().search(partname);
+                    if (part && !part->mModel.empty())
+                        models.push_back("meshes/"+part->mModel);
                 }
             }
         }
@@ -522,11 +515,13 @@ namespace MWClass
             const MWBase::World *world = MWBase::Environment::get().getWorld();
             const MWWorld::Store<ESM::GameSetting> &store = world->getStore().get<ESM::GameSetting>();
 
-            return store.find("sWerewolfPopup")->getString();
+            return store.find("sWerewolfPopup")->mValue.getString();
         }
 
         const MWWorld::LiveCellRef<ESM::NPC> *ref = ptr.get<ESM::NPC>();
-        return ref->mBase->mName;
+        const std::string& name = ref->mBase->mName;
+
+        return !name.empty() ? name : ref->mBase->mId;
     }
 
     MWMechanics::CreatureStats& Npc::getCreatureStats (const MWWorld::Ptr& ptr) const
@@ -559,13 +554,18 @@ namespace MWClass
 
         MWMechanics::applyFatigueLoss(ptr, weapon, attackStrength);
 
-        const float fCombatDistance = store.find("fCombatDistance")->getFloat();
+        const float fCombatDistance = store.find("fCombatDistance")->mValue.getFloat();
         float dist = fCombatDistance * (!weapon.isEmpty() ?
                                weapon.get<ESM::Weapon>()->mBase->mData.mReach :
-                               store.find("fHandToHandReach")->getFloat());
+                               store.find("fHandToHandReach")->mValue.getFloat());
+
+        // For AI actors, get combat targets to use in the ray cast. Only those targets will return a positive hit result.
+        std::vector<MWWorld::Ptr> targetActors;
+        if (ptr != MWMechanics::getPlayer())
+            getCreatureStats(ptr).getAiSequence().getCombatTargets(targetActors);
 
         // TODO: Use second to work out the hit angle
-        std::pair<MWWorld::Ptr, osg::Vec3f> result = world->getHitContact(ptr, dist);
+        std::pair<MWWorld::Ptr, osg::Vec3f> result = world->getHitContact(ptr, dist, targetActors);
         MWWorld::Ptr victim = result.first;
         osg::Vec3f hitPosition (result.second);
         if(victim.isEmpty()) // Didn't hit anything
@@ -585,11 +585,11 @@ namespace MWClass
         if(!weapon.isEmpty())
             weapskill = weapon.getClass().getEquipmentSkill(weapon);
 
-        float hitchance = MWMechanics::getHitChance(ptr, victim, ptr.getClass().getSkill(ptr, weapskill));
+        float hitchance = MWMechanics::getHitChance(ptr, victim, getSkill(ptr, weapskill));
 
         if (Misc::Rng::roll0to99() >= hitchance)
         {
-            othercls.onHit(victim, 0.0f, false, weapon, ptr, false);
+            othercls.onHit(victim, 0.0f, false, weapon, ptr, osg::Vec3f(), false);
             MWMechanics::reduceWeaponCondition(0.f, false, weapon, ptr);
             return;
         }
@@ -598,7 +598,7 @@ namespace MWClass
         float damage = 0.0f;
         if(!weapon.isEmpty())
         {
-            const unsigned char *attack = NULL;
+            const unsigned char *attack = nullptr;
             if(type == ESM::Weapon::AT_Chop)
                 attack = weapon.get<ESM::Weapon>()->mBase->mData.mChop;
             else if(type == ESM::Weapon::AT_Slash)
@@ -610,6 +610,8 @@ namespace MWClass
                 damage  = attack[0] + ((attack[1]-attack[0])*attackStrength);
             }
             MWMechanics::adjustWeaponDamage(damage, weapon, ptr);
+            MWMechanics::resistNormalWeapon(victim, ptr, weapon, damage);
+            MWMechanics::applyWerewolfDamageMult(victim, weapon, damage);
             MWMechanics::reduceWeaponCondition(damage, true, weapon, ptr);
             healthdmg = true;
         }
@@ -627,14 +629,14 @@ namespace MWClass
                     && !MWBase::Environment::get().getMechanicsManager()->awarenessCheck(ptr, victim);
             if(unaware)
             {
-                damage *= store.find("fCombatCriticalStrikeMult")->getFloat();
+                damage *= store.find("fCombatCriticalStrikeMult")->mValue.getFloat();
                 MWBase::Environment::get().getWindowManager()->messageBox("#{sTargetCriticalStrike}");
                 MWBase::Environment::get().getSoundManager()->playSound3D(victim, "critical damage", 1.0f, 1.0f);
             }
         }
 
         if (othercls.getCreatureStats(victim).getKnockedDown())
-            damage *= store.find("fCombatKODamageMult")->getFloat();
+            damage *= store.find("fCombatKODamageMult")->mValue.getFloat();
 
         // Apply "On hit" enchanted weapons
         MWMechanics::applyOnStrikeEnchantment(ptr, victim, weapon, hitPosition);
@@ -644,51 +646,68 @@ namespace MWClass
         if (MWMechanics::blockMeleeAttack(ptr, victim, weapon, damage, attackStrength))
             damage = 0;
 
-        if (healthdmg && damage > 0)
-            MWBase::Environment::get().getWorld()->spawnBloodEffect(victim, hitPosition);
+        if (victim == MWMechanics::getPlayer() && MWBase::Environment::get().getWorld()->getGodModeState())
+            damage = 0;
 
         MWMechanics::diseaseContact(victim, ptr);
 
-        othercls.onHit(victim, damage, healthdmg, weapon, ptr, true);
+        othercls.onHit(victim, damage, healthdmg, weapon, ptr, hitPosition, true);
     }
 
-    void Npc::onHit(const MWWorld::Ptr &ptr, float damage, bool ishealth, const MWWorld::Ptr &object, const MWWorld::Ptr &attacker, bool successful) const
+    void Npc::onHit(const MWWorld::Ptr &ptr, float damage, bool ishealth, const MWWorld::Ptr &object, const MWWorld::Ptr &attacker, const osg::Vec3f &hitPosition, bool successful) const
     {
         MWBase::SoundManager *sndMgr = MWBase::Environment::get().getSoundManager();
-
-        // NOTE: 'object' and/or 'attacker' may be empty.
-
-        bool wasDead = getCreatureStats(ptr).isDead();
+        MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        bool wasDead = stats.isDead();
 
         // Note OnPcHitMe is not set for friendly hits.
         bool setOnPcHitMe = true;
-        if (!attacker.isEmpty() && !ptr.getClass().getCreatureStats(ptr).getAiSequence().isInCombat(attacker))
-        {
-            getCreatureStats(ptr).setAttacked(true);
 
+        // NOTE: 'object' and/or 'attacker' may be empty.
+        if (!attacker.isEmpty() && attacker.getClass().isActor() && !stats.getAiSequence().isInCombat(attacker))
+        {
+            stats.setAttacked(true);
             setOnPcHitMe = MWBase::Environment::get().getMechanicsManager()->actorAttacked(ptr, attacker);
         }
 
-        if(!object.isEmpty())
-            getCreatureStats(ptr).setLastHitAttemptObject(object.getCellRef().getRefId());
-
-        if(setOnPcHitMe && !attacker.isEmpty() && attacker == MWMechanics::getPlayer())
+        // Attacker and target store each other as hitattemptactor if they have no one stored yet
+        if (!attacker.isEmpty() && attacker.getClass().isActor())
         {
-            const std::string &script = ptr.getClass().getScript(ptr);
+            MWMechanics::CreatureStats& statsAttacker = attacker.getClass().getCreatureStats(attacker);
+            // First handle the attacked actor
+            if ((stats.getHitAttemptActorId() == -1)
+                && (statsAttacker.getAiSequence().isInCombat(ptr)
+                    || attacker == MWMechanics::getPlayer()))
+                stats.setHitAttemptActorId(statsAttacker.getActorId());
+
+            // Next handle the attacking actor
+            if ((statsAttacker.getHitAttemptActorId() == -1)
+                && (statsAttacker.getAiSequence().isInCombat(ptr)
+                    || attacker == MWMechanics::getPlayer()))
+                statsAttacker.setHitAttemptActorId(stats.getActorId());
+        }
+
+        if (!object.isEmpty())
+            stats.setLastHitAttemptObject(object.getCellRef().getRefId());
+
+        if (setOnPcHitMe && !attacker.isEmpty() && attacker == MWMechanics::getPlayer())
+        {
+            const std::string &script = getScript(ptr);
             /* Set the OnPCHitMe script variable. The script is responsible for clearing it. */
             if(!script.empty())
                 ptr.getRefData().getLocals().setVarByInt(script, "onpchitme", 1);
         }
 
-        if(!successful)
+        if (!successful)
         {
             // Missed
-            sndMgr->playSound3D(ptr, "miss", 1.0f, 1.0f);
+            if (!attacker.isEmpty() && attacker == MWMechanics::getPlayer())
+                sndMgr->playSound3D(ptr, "miss", 1.0f, 1.0f);
             return;
         }
 
-        if(!object.isEmpty())
-            getCreatureStats(ptr).setLastHitObject(object.getCellRef().getRefId());
+        if (!object.isEmpty())
+            stats.setLastHitObject(object.getCellRef().getRefId());
 
 
         if (damage > 0.0f && !object.isEmpty())
@@ -697,7 +716,12 @@ namespace MWClass
         if (damage < 0.001f)
             damage = 0;
 
-        if(damage > 0.0f && !attacker.isEmpty())
+        bool godmode = ptr == MWMechanics::getPlayer() && MWBase::Environment::get().getWorld()->getGodModeState();
+
+        if (godmode)
+            damage = 0;
+
+        if (damage > 0.0f && !attacker.isEmpty())
         {
             // 'ptr' is losing health. Play a 'hit' voiced dialog entry if not already saying
             // something, alert the character controller, scripts, etc.
@@ -705,25 +729,20 @@ namespace MWClass
             const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
             const GMST& gmst = getGmst();
 
-            int chance = store.get<ESM::GameSetting>().find("iVoiceHitOdds")->getInt();
+            int chance = store.get<ESM::GameSetting>().find("iVoiceHitOdds")->mValue.getInteger();
             if (Misc::Rng::roll0to99() < chance)
-            {
                 MWBase::Environment::get().getDialogueManager()->say(ptr, "hit");
-            }
 
             // Check for knockdown
-            float agilityTerm = getCreatureStats(ptr).getAttribute(ESM::Attribute::Agility).getModified() * gmst.fKnockDownMult->getFloat();
-            float knockdownTerm = getCreatureStats(ptr).getAttribute(ESM::Attribute::Agility).getModified()
-                    * gmst.iKnockDownOddsMult->getInt() * 0.01f + gmst.iKnockDownOddsBase->getInt();
+            float agilityTerm = stats.getAttribute(ESM::Attribute::Agility).getModified() * gmst.fKnockDownMult->mValue.getFloat();
+            float knockdownTerm = stats.getAttribute(ESM::Attribute::Agility).getModified()
+                    * gmst.iKnockDownOddsMult->mValue.getInteger() * 0.01f + gmst.iKnockDownOddsBase->mValue.getInteger();
             if (ishealth && agilityTerm <= damage && knockdownTerm <= Misc::Rng::roll0to99())
-            {
-                getCreatureStats(ptr).setKnockedDown(true);
-
-            }
+                stats.setKnockedDown(true);
             else
-                getCreatureStats(ptr).setHitRecovery(true); // Is this supposed to always occur?
+                stats.setHitRecovery(true); // Is this supposed to always occur?
 
-            if(damage > 0 && ishealth)
+            if (damage > 0 && ishealth)
             {
                 // Hit percentages:
                 // cuirass = 30%
@@ -745,24 +764,41 @@ namespace MWClass
 
                 float unmitigatedDamage = damage;
                 float x = damage / (damage + getArmorRating(ptr));
-                damage *= std::max(gmst.fCombatArmorMinMult->getFloat(), x);
+                damage *= std::max(gmst.fCombatArmorMinMult->mValue.getFloat(), x);
                 int damageDiff = static_cast<int>(unmitigatedDamage - damage);
-                if (damage < 1)
-                    damage = 1;
+                damage = std::max(1.f, damage);
+                damageDiff = std::max(1, damageDiff);
 
                 MWWorld::InventoryStore &inv = getInventoryStore(ptr);
                 MWWorld::ContainerStoreIterator armorslot = inv.getSlot(hitslot);
                 MWWorld::Ptr armor = ((armorslot != inv.end()) ? *armorslot : MWWorld::Ptr());
-                if(!armor.isEmpty() && armor.getTypeName() == typeid(ESM::Armor).name())
+                bool hasArmor = !armor.isEmpty() && armor.getTypeName() == typeid(ESM::Armor).name();
+                // If there's no item in the carried left slot or if it is not a shield redistribute the hit.
+                if (!hasArmor && hitslot == MWWorld::InventoryStore::Slot_CarriedLeft)
                 {
-                    int armorhealth = armor.getClass().getItemHealth(armor);
-                    armorhealth -= std::min(std::max(1, damageDiff),
-                                                 armorhealth);
-                    armor.getCellRef().setCharge(armorhealth);
+                    if (Misc::Rng::rollDice(2) == 0)
+                        hitslot = MWWorld::InventoryStore::Slot_Cuirass;
+                    else
+                        hitslot = MWWorld::InventoryStore::Slot_LeftPauldron;
+                    armorslot = inv.getSlot(hitslot);
+                    if (armorslot != inv.end())
+                    {
+                        armor = *armorslot;
+                        hasArmor = !armor.isEmpty() && armor.getTypeName() == typeid(ESM::Armor).name();
+                    }
+                }
+                if (hasArmor)
+                {
+                    if (!object.isEmpty() || attacker.isEmpty() || attacker.getClass().isNpc()) // Unarmed creature attacks don't affect armor condition
+                    {
+                        int armorhealth = armor.getClass().getItemHealth(armor);
+                        armorhealth -= std::min(damageDiff, armorhealth);
+                        armor.getCellRef().setCharge(armorhealth);
 
-                    // Armor broken? unequip it
-                    if (armorhealth == 0)
-                        armor = *inv.unequipItem(armor, ptr);
+                        // Armor broken? unequip it
+                        if (armorhealth == 0)
+                            armor = *inv.unequipItem(armor, ptr);
+                    }
 
                     if (ptr == MWMechanics::getPlayer())
                         skillUsageSucceeded(ptr, armor.getClass().getEquipmentSkill(armor), 0);
@@ -785,26 +821,28 @@ namespace MWClass
             }
         }
 
-        if(ishealth)
+        if (ishealth)
         {
-            if (!attacker.isEmpty())
+            if (!attacker.isEmpty() && !godmode)
                 damage = scaleDamage(damage, attacker, ptr);
 
-            if(damage > 0.0f)
+            if (damage > 0.0f)
             {
                 sndMgr->playSound3D(ptr, "Health Damage", 1.0f, 1.0f);
                 if (ptr == MWMechanics::getPlayer())
                     MWBase::Environment::get().getWindowManager()->activateHitOverlay();
+                if (!attacker.isEmpty())
+                    MWBase::Environment::get().getWorld()->spawnBloodEffect(ptr, hitPosition);
             }
             MWMechanics::DynamicStat<float> health(getCreatureStats(ptr).getHealth());
             health.setCurrent(health.getCurrent() - damage);
-            getCreatureStats(ptr).setHealth(health);
+            stats.setHealth(health);
         }
         else
         {
             MWMechanics::DynamicStat<float> fatigue(getCreatureStats(ptr).getFatigue());
             fatigue.setCurrent(fatigue.getCurrent() - damage, true);
-            getCreatureStats(ptr).setFatigue(fatigue);
+            stats.setFatigue(fatigue);
         }
 
         if (!wasDead && getCreatureStats(ptr).isDead())
@@ -819,12 +857,12 @@ namespace MWClass
         }
     }
 
-    boost::shared_ptr<MWWorld::Action> Npc::activate (const MWWorld::Ptr& ptr,
+    std::shared_ptr<MWWorld::Action> Npc::activate (const MWWorld::Ptr& ptr,
         const MWWorld::Ptr& actor) const
     {
         // player got activated by another NPC
         if(ptr == MWMechanics::getPlayer())
-            return boost::shared_ptr<MWWorld::Action>(new MWWorld::ActionTalk(actor));
+            return std::shared_ptr<MWWorld::Action>(new MWWorld::ActionTalk(actor));
 
         // Werewolfs can't activate NPCs
         if(actor.getClass().isNpc() && actor.getClass().getNpcStats(actor).isWerewolf())
@@ -832,23 +870,47 @@ namespace MWClass
             const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
             const ESM::Sound *sound = store.get<ESM::Sound>().searchRandom("WolfNPC");
 
-            boost::shared_ptr<MWWorld::Action> action(new MWWorld::FailedAction("#{sWerewolfRefusal}"));
+            std::shared_ptr<MWWorld::Action> action(new MWWorld::FailedAction("#{sWerewolfRefusal}"));
             if(sound) action->setSound(sound->mId);
 
             return action;
         }
 
-        if(getCreatureStats(ptr).isDead())
-            return boost::shared_ptr<MWWorld::Action>(new MWWorld::ActionOpen(ptr, true));
-        if(ptr.getClass().getCreatureStats(ptr).getAiSequence().isInCombat())
-            return boost::shared_ptr<MWWorld::Action>(new MWWorld::FailedAction("#{sActorInCombat}"));
-        if(getCreatureStats(actor).getStance(MWMechanics::CreatureStats::Stance_Sneak)
-                || ptr.getClass().getCreatureStats(ptr).getKnockedDown())
-            return boost::shared_ptr<MWWorld::Action>(new MWWorld::ActionOpen(ptr)); // stealing
-        // Can't talk to werewolfs
-        if(ptr.getClass().isNpc() && ptr.getClass().getNpcStats(ptr).isWerewolf())
-            return boost::shared_ptr<MWWorld::Action> (new MWWorld::FailedAction(""));
-        return boost::shared_ptr<MWWorld::Action>(new MWWorld::ActionTalk(ptr));
+        const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+
+        if(stats.isDead())
+        {
+            bool canLoot = Settings::Manager::getBool ("can loot during death animation", "Game");
+
+            // by default user can loot friendly actors during death animation
+            if (canLoot && !stats.getAiSequence().isInCombat())
+                return std::shared_ptr<MWWorld::Action>(new MWWorld::ActionOpen(ptr));
+
+            // otherwise wait until death animation
+            if(stats.isDeathAnimationFinished())
+                return std::shared_ptr<MWWorld::Action>(new MWWorld::ActionOpen(ptr));
+        }
+        else if (!stats.getAiSequence().isInCombat())
+        {
+            if (stats.getKnockedDown() || MWBase::Environment::get().getMechanicsManager()->isSneaking(actor))
+                return std::shared_ptr<MWWorld::Action>(new MWWorld::ActionOpen(ptr)); // stealing
+
+            // Can't talk to werewolves
+            if (!getNpcStats(ptr).isWerewolf())
+                return std::shared_ptr<MWWorld::Action>(new MWWorld::ActionTalk(ptr));
+        }
+        else // In combat
+        {
+            const bool stealingInCombat = Settings::Manager::getBool ("always allow stealing from knocked out actors", "Game");
+            if (stealingInCombat && stats.getKnockedDown())
+                return std::shared_ptr<MWWorld::Action>(new MWWorld::ActionOpen(ptr)); // stealing
+        }
+
+        // Tribunal and some mod companions oddly enough must use open action as fallback
+        if (!getScript(ptr).empty() && ptr.getRefData().getLocals().getIntVar(getScript(ptr), "companion"))
+            return std::shared_ptr<MWWorld::Action>(new MWWorld::ActionOpen(ptr));
+
+        return std::shared_ptr<MWWorld::Action> (new MWWorld::FailedAction(""));
     }
 
     MWWorld::ContainerStore& Npc::getContainerStore (const MWWorld::Ptr& ptr)
@@ -876,6 +938,10 @@ namespace MWClass
 
     float Npc::getSpeed(const MWWorld::Ptr& ptr) const
     {
+        const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        if (stats.isParalyzed() || stats.getKnockedDown() || stats.isDead())
+            return 0.f;
+
         const MWBase::World *world = MWBase::Environment::get().getWorld();
         const GMST& gmst = getGmst();
 
@@ -884,18 +950,11 @@ namespace MWClass
 
         const float normalizedEncumbrance = getNormalizedEncumbrance(ptr);
 
-        bool sneaking = ptr.getClass().getCreatureStats(ptr).getStance(MWMechanics::CreatureStats::Stance_Sneak);
-        bool running = ptr.getClass().getCreatureStats(ptr).getStance(MWMechanics::CreatureStats::Stance_Run);
-
-        float walkSpeed = gmst.fMinWalkSpeed->getFloat() + 0.01f*npcdata->mNpcStats.getAttribute(ESM::Attribute::Speed).getModified()*
-                                                      (gmst.fMaxWalkSpeed->getFloat() - gmst.fMinWalkSpeed->getFloat());
-        walkSpeed *= 1.0f - gmst.fEncumberedMoveEffect->getFloat()*normalizedEncumbrance;
-        walkSpeed = std::max(0.0f, walkSpeed);
-        if(sneaking)
-            walkSpeed *= gmst.fSneakSpeedMultiplier->getFloat();
-
-        float runSpeed = walkSpeed*(0.01f * npcdata->mNpcStats.getSkill(ESM::Skill::Athletics).getModified() *
-                                    gmst.fAthleticsRunBonus->getFloat() + gmst.fBaseRunMultiplier->getFloat());
+        bool swimming = world->isSwimming(ptr);
+        bool sneaking = MWBase::Environment::get().getMechanicsManager()->isSneaking(ptr);
+        bool running = stats.getStance(MWMechanics::CreatureStats::Stance_Run);
+        bool inair = !world->isOnGround(ptr) && !swimming && !world->isFlying(ptr);
+        running = running && (inair || MWBase::Environment::get().getMechanicsManager()->isRunning(ptr));
 
         float moveSpeed;
         if(getEncumbrance(ptr) > getCapacity(ptr))
@@ -905,30 +964,25 @@ namespace MWClass
         {
             float flySpeed = 0.01f*(npcdata->mNpcStats.getAttribute(ESM::Attribute::Speed).getModified() +
                                     mageffects.get(ESM::MagicEffect::Levitate).getMagnitude());
-            flySpeed = gmst.fMinFlySpeed->getFloat() + flySpeed*(gmst.fMaxFlySpeed->getFloat() - gmst.fMinFlySpeed->getFloat());
-            flySpeed *= 1.0f - gmst.fEncumberedMoveEffect->getFloat() * normalizedEncumbrance;
+            flySpeed = gmst.fMinFlySpeed->mValue.getFloat() + flySpeed*(gmst.fMaxFlySpeed->mValue.getFloat() - gmst.fMinFlySpeed->mValue.getFloat());
+            flySpeed *= 1.0f - gmst.fEncumberedMoveEffect->mValue.getFloat() * normalizedEncumbrance;
             flySpeed = std::max(0.0f, flySpeed);
             moveSpeed = flySpeed;
         }
-        else if(world->isSwimming(ptr))
-        {
-            float swimSpeed = walkSpeed;
-            if(running)
-                swimSpeed = runSpeed;
-            swimSpeed *= 1.0f + 0.01f * mageffects.get(ESM::MagicEffect::SwiftSwim).getMagnitude();
-            swimSpeed *= gmst.fSwimRunBase->getFloat() + 0.01f*npcdata->mNpcStats.getSkill(ESM::Skill::Athletics).getModified()*
-                                                    gmst.fSwimRunAthleticsMult->getFloat();
-            moveSpeed = swimSpeed;
-        }
-        else if(running && !sneaking)
-            moveSpeed = runSpeed;
+        else if (swimming)
+            moveSpeed = getSwimSpeed(ptr);
+        else if (running && !sneaking)
+            moveSpeed = getRunSpeed(ptr);
         else
-            moveSpeed = walkSpeed;
-        if(getMovementSettings(ptr).mPosition[0] != 0 && getMovementSettings(ptr).mPosition[1] == 0)
-            moveSpeed *= 0.75f;
+            moveSpeed = getWalkSpeed(ptr);
 
         if(npcdata->mNpcStats.isWerewolf() && running && npcdata->mNpcStats.getDrawState() == MWMechanics::DrawState_Nothing)
-            moveSpeed *= gmst.fWereWolfRunMult->getFloat();
+            moveSpeed *= gmst.fWereWolfRunMult->mValue.getFloat();
+
+        const MWMechanics::Movement& movementSettings = ptr.getClass().getMovementSettings(ptr);
+        if (movementSettings.mIsStrafing)
+            moveSpeed *= 0.75f;
+        moveSpeed *= movementSettings.mSpeedFactor;
 
         return moveSpeed;
     }
@@ -938,14 +992,18 @@ namespace MWClass
         if(getEncumbrance(ptr) > getCapacity(ptr))
             return 0.f;
 
+        const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        if (stats.isParalyzed() || stats.getKnockedDown() || stats.isDead())
+            return 0.f;
+
         const NpcCustomData *npcdata = static_cast<const NpcCustomData*>(ptr.getRefData().getCustomData());
         const GMST& gmst = getGmst();
         const MWMechanics::MagicEffects &mageffects = npcdata->mNpcStats.getMagicEffects();
-        const float encumbranceTerm = gmst.fJumpEncumbranceBase->getFloat() +
-                                          gmst.fJumpEncumbranceMultiplier->getFloat() *
-                                          (1.0f - Npc::getEncumbrance(ptr)/Npc::getCapacity(ptr));
+        const float encumbranceTerm = gmst.fJumpEncumbranceBase->mValue.getFloat() +
+                                          gmst.fJumpEncumbranceMultiplier->mValue.getFloat() *
+                                          (1.0f - Npc::getNormalizedEncumbrance(ptr));
 
-        float a = static_cast<float>(npcdata->mNpcStats.getSkill(ESM::Skill::Acrobatics).getModified());
+        float a = getSkill(ptr, ESM::Skill::Acrobatics);
         float b = 0.0f;
         if(a > 50.0f)
         {
@@ -953,16 +1011,16 @@ namespace MWClass
             a = 50.0f;
         }
 
-        float x = gmst.fJumpAcrobaticsBase->getFloat() +
-                  std::pow(a / 15.0f, gmst.fJumpAcroMultiplier->getFloat());
-        x += 3.0f * b * gmst.fJumpAcroMultiplier->getFloat();
+        float x = gmst.fJumpAcrobaticsBase->mValue.getFloat() +
+                  std::pow(a / 15.0f, gmst.fJumpAcroMultiplier->mValue.getFloat());
+        x += 3.0f * b * gmst.fJumpAcroMultiplier->mValue.getFloat();
         x += mageffects.get(ESM::MagicEffect::Jump).getMagnitude() * 64;
         x *= encumbranceTerm;
 
-        if(ptr.getClass().getCreatureStats(ptr).getStance(MWMechanics::CreatureStats::Stance_Run))
-            x *= gmst.fJumpRunMultiplier->getFloat();
+        if(stats.getStance(MWMechanics::CreatureStats::Stance_Run))
+            x *= gmst.fJumpRunMultiplier->mValue.getFloat();
         x *= npcdata->mNpcStats.getFatigueTerm();
-        x -= -627.2f;/*gravity constant*/
+        x -= -Constants::GravityConst * Constants::UnitsPerMeter;
         x /= 3.0f;
 
         return x;
@@ -984,17 +1042,28 @@ namespace MWClass
 
     void Npc::registerSelf()
     {
-        boost::shared_ptr<Class> instance (new Npc);
+        std::shared_ptr<Class> instance (new Npc);
         registerClass (typeid (ESM::NPC).name(), instance);
     }
 
     bool Npc::hasToolTip(const MWWorld::ConstPtr& ptr) const
     {
-        if (!ptr.getRefData().getCustomData())
+        if (!ptr.getRefData().getCustomData() || MWBase::Environment::get().getWindowManager()->isGuiMode())
             return true;
 
         const NpcCustomData& customData = ptr.getRefData().getCustomData()->asNpcCustomData();
-        return !customData.mNpcStats.getAiSequence().isInCombat() || customData.mNpcStats.isDead();
+
+        if (customData.mNpcStats.isDead() && customData.mNpcStats.isDeathAnimationFinished())
+            return true;
+
+        if (!customData.mNpcStats.getAiSequence().isInCombat())
+            return true;
+
+        const bool stealingInCombat = Settings::Manager::getBool ("always allow stealing from knocked out actors", "Game");
+        if (stealingInCombat && customData.mNpcStats.getKnockedDown())
+            return true;
+
+        return false;
     }
 
     MWGui::ToolTipInfo Npc::getToolTipInfo (const MWWorld::ConstPtr& ptr, int count) const
@@ -1004,11 +1073,11 @@ namespace MWClass
         bool fullHelp = MWBase::Environment::get().getWindowManager()->getFullHelp();
         MWGui::ToolTipInfo info;
 
-        info.caption = getName(ptr);
-        if(fullHelp && ptr.getRefData().getCustomData() && ptr.getRefData().getCustomData()->asNpcCustomData().mNpcStats.isWerewolf())
+        info.caption = MyGUI::TextIterator::toTagsString(getName(ptr));
+        if(fullHelp && !ref->mBase->mName.empty() && ptr.getRefData().getCustomData() && ptr.getRefData().getCustomData()->asNpcCustomData().mNpcStats.isWerewolf())
         {
             info.caption += " (";
-            info.caption += ref->mBase->mName;
+            info.caption += MyGUI::TextIterator::toTagsString(ref->mBase->mName);
             info.caption += ")";
         }
 
@@ -1021,8 +1090,8 @@ namespace MWClass
     float Npc::getCapacity (const MWWorld::Ptr& ptr) const
     {
         const MWMechanics::CreatureStats& stats = getCreatureStats (ptr);
-        static const float fEncumbranceStrMult = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find("fEncumbranceStrMult")->getFloat();
-        return stats.getAttribute(0).getModified()*fEncumbranceStrMult;
+        static const float fEncumbranceStrMult = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find("fEncumbranceStrMult")->mValue.getFloat();
+        return stats.getAttribute(ESM::Attribute::Strength).getModified()*fEncumbranceStrMult;
     }
 
     float Npc::getEncumbrance (const MWWorld::Ptr& ptr) const
@@ -1062,24 +1131,31 @@ namespace MWClass
         const MWWorld::Store<ESM::GameSetting> &store = world->getStore().get<ESM::GameSetting>();
 
         MWMechanics::NpcStats &stats = getNpcStats(ptr);
-        MWWorld::InventoryStore &invStore = getInventoryStore(ptr);
+        const MWWorld::InventoryStore &invStore = getInventoryStore(ptr);
 
-        float fUnarmoredBase1 = store.find("fUnarmoredBase1")->getFloat();
-        float fUnarmoredBase2 = store.find("fUnarmoredBase2")->getFloat();
-        int unarmoredSkill = stats.getSkill(ESM::Skill::Unarmored).getModified();
+        float fUnarmoredBase1 = store.find("fUnarmoredBase1")->mValue.getFloat();
+        float fUnarmoredBase2 = store.find("fUnarmoredBase2")->mValue.getFloat();
+        float unarmoredSkill = getSkill(ptr, ESM::Skill::Unarmored);
 
-        int ratings[MWWorld::InventoryStore::Slots];
+        float ratings[MWWorld::InventoryStore::Slots];
         for(int i = 0;i < MWWorld::InventoryStore::Slots;i++)
         {
-            MWWorld::ContainerStoreIterator it = invStore.getSlot(i);
+            MWWorld::ConstContainerStoreIterator it = invStore.getSlot(i);
             if (it == invStore.end() || it->getTypeName() != typeid(ESM::Armor).name())
             {
                 // unarmored
-                ratings[i] = static_cast<int>((fUnarmoredBase1 * unarmoredSkill) * (fUnarmoredBase2 * unarmoredSkill));
+                ratings[i] = (fUnarmoredBase1 * unarmoredSkill) * (fUnarmoredBase2 * unarmoredSkill);
             }
             else
             {
                 ratings[i] = it->getClass().getEffectiveArmorRating(*it, ptr);
+
+                // Take in account armor condition
+                const bool hasHealth = it->getClass().hasItemHealth(*it);
+                if (hasHealth)
+                {
+                    ratings[i] *= it->getClass().getItemNormalizedHealth(*it);
+                }
             }
         }
 
@@ -1106,6 +1182,17 @@ namespace MWClass
         const ESM::Race* race =
                 MWBase::Environment::get().getWorld()->getStore().get<ESM::Race>().find(ref->mBase->mRace);
 
+        // Race weight should not affect 1st-person meshes, otherwise it will change hand proportions and can break aiming.
+        if (ptr == MWMechanics::getPlayer() && ptr.isInCell() && MWBase::Environment::get().getWorld()->isFirstPerson())
+        {
+            if (ref->mBase->isMale())
+                scale *= race->mData.mHeight.mMale;
+            else
+                scale *= race->mData.mHeight.mFemale;
+
+            return;
+        }
+
         if (ref->mBase->isMale())
         {
             scale.x() *= race->mData.mWeight.mMale;
@@ -1118,16 +1205,11 @@ namespace MWClass
             scale.y() *= race->mData.mWeight.mFemale;
             scale.z() *= race->mData.mHeight.mFemale;
         }
-
     }
 
     int Npc::getServices(const MWWorld::ConstPtr &actor) const
     {
-        const MWWorld::LiveCellRef<ESM::NPC>* ref = actor.get<ESM::NPC>();
-        if (ref->mBase->mHasAI)
-            return ref->mBase->mAiData.mServices;
-        else
-            return 0;
+        return actor.get<ESM::NPC>()->mBase->mAiData.mServices;
     }
 
 
@@ -1136,6 +1218,8 @@ namespace MWClass
         if(name == "left" || name == "right")
         {
             MWBase::World *world = MWBase::Environment::get().getWorld();
+            if(world->isFlying(ptr))
+                return std::string();
             osg::Vec3f pos(ptr.getRefData().getPosition().asVec3());
             if(world->isSwimming(ptr))
                 return (name == "left") ? "Swim Left" : "Swim Right";
@@ -1143,17 +1227,17 @@ namespace MWClass
                 return (name == "left") ? "FootWaterLeft" : "FootWaterRight";
             if(world->isOnGround(ptr))
             {
-                if (ptr.getClass().getNpcStats(ptr).isWerewolf()
-                        && ptr.getClass().getCreatureStats(ptr).getStance(MWMechanics::CreatureStats::Stance_Run))
+                if (getNpcStats(ptr).isWerewolf()
+                        && getCreatureStats(ptr).getStance(MWMechanics::CreatureStats::Stance_Run))
                 {
-                    MWMechanics::WeaponType weaponType = MWMechanics::WeapType_None;
-                    MWMechanics::getActiveWeapon(ptr.getClass().getCreatureStats(ptr), ptr.getClass().getInventoryStore(ptr), &weaponType);
-                    if (weaponType == MWMechanics::WeapType_None)
-                        return "";
+                    int weaponType = ESM::Weapon::None;
+                    MWMechanics::getActiveWeapon(ptr, &weaponType);
+                    if (weaponType == ESM::Weapon::None)
+                        return std::string();
                 }
 
-                MWWorld::InventoryStore &inv = Npc::getInventoryStore(ptr);
-                MWWorld::ContainerStoreIterator boots = inv.getSlot(MWWorld::InventoryStore::Slot_Boots);
+                const MWWorld::InventoryStore &inv = Npc::getInventoryStore(ptr);
+                MWWorld::ConstContainerStoreIterator boots = inv.getSlot(MWWorld::InventoryStore::Slot_Boots);
                 if(boots == inv.end() || boots->getTypeName() != typeid(ESM::Armor).name())
                     return (name == "left") ? "FootBareLeft" : "FootBareRight";
 
@@ -1167,19 +1251,12 @@ namespace MWClass
                         return (name == "left") ? "FootHeavyLeft" : "FootHeavyRight";
                 }
             }
-            return "";
+            return std::string();
         }
 
+        // Morrowind ignores land soundgen for NPCs
         if(name == "land")
-        {
-            MWBase::World *world = MWBase::Environment::get().getWorld();
-            osg::Vec3f pos(ptr.getRefData().getPosition().asVec3());
-            if(world->isUnderwater(ptr.getCell(), pos) || world->isWalkingOnWater(ptr))
-                return "DefaultLandWater";
-            if(world->isOnGround(ptr))
-                return "DefaultLand";
-            return "";
-        }
+            return std::string();
         if(name == "swimleft")
             return "Swim Left";
         if(name == "swimright")
@@ -1189,11 +1266,11 @@ namespace MWClass
         // only for biped creatures?
 
         if(name == "moan")
-            return "";
+            return std::string();
         if(name == "roar")
-            return "";
+            return std::string();
         if(name == "scream")
-            return "";
+            return std::string();
 
         throw std::runtime_error(std::string("Unexpected soundgen type: ")+name);
     }
@@ -1205,20 +1282,14 @@ namespace MWClass
         return MWWorld::Ptr(cell.insert(ref), &cell);
     }
 
-    int Npc::getSkill(const MWWorld::Ptr& ptr, int skill) const
+    float Npc::getSkill(const MWWorld::Ptr& ptr, int skill) const
     {
-        return ptr.getClass().getNpcStats(ptr).getSkill(skill).getModified();
+        return getNpcStats(ptr).getSkill(skill).getModified();
     }
 
     int Npc::getBloodTexture(const MWWorld::ConstPtr &ptr) const
     {
-        const MWWorld::LiveCellRef<ESM::NPC> *ref = ptr.get<ESM::NPC>();
-
-        if (ref->mBase->mFlags & ESM::NPC::Skeleton)
-            return 1;
-        if (ref->mBase->mFlags & ESM::NPC::Metal)
-            return 2;
-        return 0;
+        return ptr.get<ESM::NPC>()->mBase->mBloodType;
     }
 
     void Npc::readAdditionalState (const MWWorld::Ptr& ptr, const ESM::ObjectState& state)
@@ -1227,14 +1298,12 @@ namespace MWClass
         if (!state.mHasCustomState)
             return;
 
-        const ESM::NpcState& state2 = dynamic_cast<const ESM::NpcState&> (state);
-
         if (state.mVersion > 0)
         {
             if (!ptr.getRefData().getCustomData())
             {
                 // Create a CustomData, but don't fill it from ESM records (not needed)
-                std::auto_ptr<NpcCustomData> data (new NpcCustomData);
+                std::unique_ptr<NpcCustomData> data (new NpcCustomData);
                 ptr.getRefData().setCustomData (data.release());
             }
         }
@@ -1242,37 +1311,41 @@ namespace MWClass
             ensureCustomData(ptr); // in openmw 0.30 savegames not all state was saved yet, so need to load it regardless.
 
         NpcCustomData& customData = ptr.getRefData().getCustomData()->asNpcCustomData();
-
-        customData.mInventoryStore.readState (state2.mInventory);
-        customData.mNpcStats.readState (state2.mNpcStats);
-        static_cast<MWMechanics::CreatureStats&> (customData.mNpcStats).readState (state2.mCreatureStats);
+        const ESM::NpcState& npcState = state.asNpcState();
+        customData.mInventoryStore.readState (npcState.mInventory);
+        customData.mNpcStats.readState (npcState.mNpcStats);
+        bool spellsInitialised = customData.mNpcStats.getSpells().setSpells(ptr.get<ESM::NPC>()->mBase->mId);
+        if(spellsInitialised)
+            customData.mNpcStats.getSpells().clear();
+        customData.mNpcStats.readState (npcState.mCreatureStats);
     }
 
     void Npc::writeAdditionalState (const MWWorld::ConstPtr& ptr, ESM::ObjectState& state)
         const
     {
-        ESM::NpcState& state2 = dynamic_cast<ESM::NpcState&> (state);
-
         if (!ptr.getRefData().getCustomData())
         {
             state.mHasCustomState = false;
             return;
         }
 
-        const NpcCustomData& customData = ptr.getRefData().getCustomData()->asNpcCustomData();
+        if (ptr.getRefData().getCount() <= 0)
+        {
+            state.mHasCustomState = false;
+            return;
+        }
 
-        customData.mInventoryStore.writeState (state2.mInventory);
-        customData.mNpcStats.writeState (state2.mNpcStats);
-        static_cast<const MWMechanics::CreatureStats&> (customData.mNpcStats).writeState (state2.mCreatureStats);
+        const NpcCustomData& customData = ptr.getRefData().getCustomData()->asNpcCustomData();
+        ESM::NpcState& npcState = state.asNpcState();
+        customData.mInventoryStore.writeState (npcState.mInventory);
+        customData.mNpcStats.writeState (npcState.mNpcStats);
+        customData.mNpcStats.writeState (npcState.mCreatureStats);
     }
 
     int Npc::getBaseGold(const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::NPC> *ref = ptr.get<ESM::NPC>();
-        if(ref->mBase->mNpdtType != ESM::NPC::NPC_WITH_AUTOCALCULATED_STATS)
-            return ref->mBase->mNpdt52.mGold;
-        else
-            return ref->mBase->mNpdt12.mGold;
+        return ref->mBase->mNpdt.mGold;
     }
 
     bool Npc::isClass(const MWWorld::ConstPtr& ptr, const std::string &className) const
@@ -1292,13 +1365,16 @@ namespace MWClass
 
     void Npc::respawn(const MWWorld::Ptr &ptr) const
     {
-        const MWMechanics::CreatureStats& creatureStats = ptr.getClass().getCreatureStats(ptr);
+        const MWMechanics::CreatureStats& creatureStats = getCreatureStats(ptr);
         if (ptr.getRefData().getCount() > 0 && !creatureStats.isDead())
             return;
 
+        if (!creatureStats.isDeathAnimationFinished())
+            return;
+
         const MWWorld::Store<ESM::GameSetting>& gmst = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
-        static const float fCorpseRespawnDelay = gmst.find("fCorpseRespawnDelay")->getFloat();
-        static const float fCorpseClearDelay = gmst.find("fCorpseClearDelay")->getFloat();
+        static const float fCorpseRespawnDelay = gmst.find("fCorpseRespawnDelay")->mValue.getFloat();
+        static const float fCorpseClearDelay = gmst.find("fCorpseClearDelay")->mValue.getFloat();
 
         float delay = ptr.getRefData().getCount() == 0 ? fCorpseClearDelay : std::min(fCorpseRespawnDelay, fCorpseClearDelay);
 
@@ -1308,10 +1384,15 @@ namespace MWClass
             if (ptr.getCellRef().hasContentFile())
             {
                 if (ptr.getRefData().getCount() == 0)
+                {
                     ptr.getRefData().setCount(1);
+                    const std::string& script = getScript(ptr);
+                    if (!script.empty())
+                        MWBase::Environment::get().getWorld()->getLocalScripts().add(script, ptr);
+                }
 
                 MWBase::Environment::get().getWorld()->removeContainerScripts(ptr);
-                ptr.getRefData().setCustomData(NULL);
+                ptr.getRefData().setCustomData(nullptr);
 
                 // Reset to original position
                 MWBase::Environment::get().getWorld()->moveObject(ptr, ptr.getCellRef().getPosition().pos[0],
@@ -1348,7 +1429,82 @@ namespace MWClass
 
     int Npc::getPrimaryFactionRank (const MWWorld::ConstPtr& ptr) const
     {
+        std::string factionID = ptr.getClass().getPrimaryFaction(ptr);
+        if(factionID.empty())
+            return -1;
+
+        // Search in the NPC data first
+        if (const MWWorld::CustomData* data = ptr.getRefData().getCustomData())
+        {
+            int rank = data->asNpcCustomData().mNpcStats.getFactionRank(factionID);
+            if (rank >= 0)
+                return rank;
+        }
+
+        // Use base NPC record as a fallback
         const MWWorld::LiveCellRef<ESM::NPC> *ref = ptr.get<ESM::NPC>();
         return ref->mBase->getFactionRank();
+    }
+
+    void Npc::setBaseAISetting(const std::string& id, MWMechanics::CreatureStats::AiSetting setting, int value) const
+    {
+        MWMechanics::setBaseAISetting<ESM::NPC>(id, setting, value);
+    }
+
+    void Npc::modifyBaseInventory(const std::string& actorId, const std::string& itemId, int amount) const
+    {
+        MWMechanics::modifyBaseInventory<ESM::NPC>(actorId, itemId, amount);
+    }
+
+    float Npc::getWalkSpeed(const MWWorld::Ptr& ptr) const
+    {
+        const GMST& gmst = getGmst();
+        const NpcCustomData* npcdata = static_cast<const NpcCustomData*>(ptr.getRefData().getCustomData());
+        const float normalizedEncumbrance = getNormalizedEncumbrance(ptr);
+        const bool sneaking = MWBase::Environment::get().getMechanicsManager()->isSneaking(ptr);
+
+        float walkSpeed = gmst.fMinWalkSpeed->mValue.getFloat()
+                + 0.01f * npcdata->mNpcStats.getAttribute(ESM::Attribute::Speed).getModified()
+                * (gmst.fMaxWalkSpeed->mValue.getFloat() - gmst.fMinWalkSpeed->mValue.getFloat());
+        walkSpeed *= 1.0f - gmst.fEncumberedMoveEffect->mValue.getFloat()*normalizedEncumbrance;
+        walkSpeed = std::max(0.0f, walkSpeed);
+        if(sneaking)
+            walkSpeed *= gmst.fSneakSpeedMultiplier->mValue.getFloat();
+
+        return walkSpeed;
+    }
+
+    float Npc::getRunSpeed(const MWWorld::Ptr& ptr) const
+    {
+        const GMST& gmst = getGmst();
+        return getWalkSpeed(ptr)
+                * (0.01f * getSkill(ptr, ESM::Skill::Athletics) * gmst.fAthleticsRunBonus->mValue.getFloat()
+                   + gmst.fBaseRunMultiplier->mValue.getFloat());
+    }
+
+    float Npc::getSwimSpeed(const MWWorld::Ptr& ptr) const
+    {
+        const GMST& gmst = getGmst();
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        const NpcCustomData* npcdata = static_cast<const NpcCustomData*>(ptr.getRefData().getCustomData());
+        const MWMechanics::MagicEffects& mageffects = npcdata->mNpcStats.getMagicEffects();
+        const bool swimming = world->isSwimming(ptr);
+        const bool inair = !world->isOnGround(ptr) && !swimming && !world->isFlying(ptr);
+        const bool running = stats.getStance(MWMechanics::CreatureStats::Stance_Run)
+                && (inair || MWBase::Environment::get().getMechanicsManager()->isRunning(ptr));
+
+        float swimSpeed;
+
+        if (running)
+            swimSpeed = getRunSpeed(ptr);
+        else
+            swimSpeed = getWalkSpeed(ptr);
+
+        swimSpeed *= 1.0f + 0.01f * mageffects.get(ESM::MagicEffect::SwiftSwim).getMagnitude();
+        swimSpeed *= gmst.fSwimRunBase->mValue.getFloat()
+                + 0.01f * getSkill(ptr, ESM::Skill::Athletics) * gmst.fSwimRunAthleticsMult->mValue.getFloat();
+
+        return swimSpeed;
     }
 }

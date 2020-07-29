@@ -3,12 +3,13 @@
 
 #include <string>
 #include <map>
+#include <mutex>
 
 #include <osg/ref_ptr>
 
 #include <osg/Shader>
 
-#include <OpenThreads/Mutex>
+#include <osgViewer/Viewer>
 
 namespace Shader
 {
@@ -26,15 +27,29 @@ namespace Shader
         /// @param shaderTemplate The filename of the shader template.
         /// @param defines Define values that can be retrieved by the shader template.
         /// @param shaderType The type of shader (usually vertex or fragment shader).
-        /// @note May return NULL on failure.
+        /// @note May return nullptr on failure.
         /// @note Thread safe.
-        osg::ref_ptr<osg::Shader> getShader(const std::string& shaderTemplate, const DefineMap& defines, osg::Shader::Type shaderType);
+        osg::ref_ptr<osg::Shader> getShader(const std::string& templateName, const DefineMap& defines, osg::Shader::Type shaderType);
 
         osg::ref_ptr<osg::Program> getProgram(osg::ref_ptr<osg::Shader> vertexShader, osg::ref_ptr<osg::Shader> fragmentShader);
 
+        /// Get (a copy of) the DefineMap used to construct all shaders
+        DefineMap getGlobalDefines();
+
+        /// Set the DefineMap used to construct all shaders
+        /// @param defines The DefineMap to use
+        /// @note This will change the source code for any shaders already created, potentially causing problems if they're being used to render a frame. It is recommended that any associated Viewers have their threading stopped while this function is running if any shaders are in use.
+        void setGlobalDefines(DefineMap & globalDefines);
+
+        void releaseGLObjects(osg::State* state);
+
+        const osg::ref_ptr<osg::Uniform> getShadowMapAlphaTestEnableUniform();
+        const osg::ref_ptr<osg::Uniform> getShadowMapAlphaTestDisableUniform();
 
     private:
         std::string mPath;
+
+        DefineMap mGlobalDefines;
 
         // <name, code>
         typedef std::map<std::string, std::string> TemplateMap;
@@ -47,9 +62,16 @@ namespace Shader
         typedef std::map<std::pair<osg::ref_ptr<osg::Shader>, osg::ref_ptr<osg::Shader> >, osg::ref_ptr<osg::Program> > ProgramMap;
         ProgramMap mPrograms;
 
-        OpenThreads::Mutex mMutex;
+        std::mutex mMutex;
+
+        const osg::ref_ptr<osg::Uniform> mShadowMapAlphaTestEnableUniform = new osg::Uniform();
+        const osg::ref_ptr<osg::Uniform> mShadowMapAlphaTestDisableUniform = new osg::Uniform();
     };
 
+    bool parseFors(std::string& source, const std::string& templateName);
+
+    bool parseDefines(std::string& source, const ShaderManager::DefineMap& defines,
+        const ShaderManager::DefineMap& globalDefines, const std::string& templateName);
 }
 
 #endif

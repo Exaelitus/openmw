@@ -1,16 +1,17 @@
 #ifndef OPENMW_MECHANICS_LEVELLEDLIST_H
 #define OPENMW_MECHANICS_LEVELLEDLIST_H
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/rng.hpp>
-
-#include <iostream>
 
 #include "../mwworld/ptr.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/manualref.hpp"
 #include "../mwworld/class.hpp"
+
 #include "../mwbase/world.hpp"
 #include "../mwbase/environment.hpp"
+
 #include "creaturestats.hpp"
 #include "actorutil.hpp"
 
@@ -18,24 +19,22 @@ namespace MWMechanics
 {
 
     /// @return ID of resulting item, or empty if none
-    inline std::string getLevelledItem (const ESM::LevelledListBase* levItem, bool creature, unsigned char failChance=0)
+    inline std::string getLevelledItem (const ESM::LevelledListBase* levItem, bool creature)
     {
         const std::vector<ESM::LevelledListBase::LevelItem>& items = levItem->mList;
 
         const MWWorld::Ptr& player = getPlayer();
         int playerLevel = player.getClass().getCreatureStats(player).getLevel();
 
-        failChance += levItem->mChanceNone;
-
-        if (Misc::Rng::roll0to99() < failChance)
+        if (Misc::Rng::roll0to99() < levItem->mChanceNone)
             return std::string();
 
         std::vector<std::string> candidates;
         int highestLevel = 0;
-        for (std::vector<ESM::LevelledListBase::LevelItem>::const_iterator it = items.begin(); it != items.end(); ++it)
+        for (const auto& levelledItem : items)
         {
-            if (it->mLevel > highestLevel && it->mLevel <= playerLevel)
-                highestLevel = it->mLevel;
+            if (levelledItem.mLevel > highestLevel && levelledItem.mLevel <= playerLevel)
+                highestLevel = levelledItem.mLevel;
         }
 
         // For levelled creatures, the flags are swapped. This file format just makes so much sense.
@@ -44,14 +43,14 @@ namespace MWMechanics
             allLevels = levItem->mFlags & ESM::CreatureLevList::AllLevels;
 
         std::pair<int, std::string> highest = std::make_pair(-1, "");
-        for (std::vector<ESM::LevelledListBase::LevelItem>::const_iterator it = items.begin(); it != items.end(); ++it)
+        for (const auto& levelledItem : items)
         {
-            if (playerLevel >= it->mLevel
-                    && (allLevels || it->mLevel == highestLevel))
+            if (playerLevel >= levelledItem.mLevel
+                    && (allLevels || levelledItem.mLevel == highestLevel))
             {
-                candidates.push_back(it->mId);
-                if (it->mLevel >= highest.first)
-                    highest = std::make_pair(it->mLevel, it->mId);
+                candidates.push_back(levelledItem.mId);
+                if (levelledItem.mLevel >= highest.first)
+                    highest = std::make_pair(levelledItem.mLevel, levelledItem.mId);
             }
         }
         if (candidates.empty())
@@ -61,7 +60,7 @@ namespace MWMechanics
         // Vanilla doesn't fail on nonexistent items in levelled lists
         if (!MWBase::Environment::get().getWorld()->getStore().find(Misc::StringUtils::lowerCase(item)))
         {
-            std::cerr << "Warning: ignoring nonexistent item '" << item << "' in levelled list '" << levItem->mId << "'" << std::endl;
+            Log(Debug::Warning) << "Warning: ignoring nonexistent item '" << item << "' in levelled list '" << levItem->mId << "'";
             return std::string();
         }
 
@@ -75,9 +74,9 @@ namespace MWMechanics
         else
         {
             if (ref.getPtr().getTypeName() == typeid(ESM::ItemLevList).name())
-                return getLevelledItem(ref.getPtr().get<ESM::ItemLevList>()->mBase, false, failChance);
+                return getLevelledItem(ref.getPtr().get<ESM::ItemLevList>()->mBase, false);
             else
-                return getLevelledItem(ref.getPtr().get<ESM::CreatureLevList>()->mBase, true, failChance);
+                return getLevelledItem(ref.getPtr().get<ESM::CreatureLevList>()->mBase, true);
         }
     }
 

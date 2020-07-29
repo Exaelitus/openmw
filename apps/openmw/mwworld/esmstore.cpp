@@ -1,14 +1,54 @@
 #include "esmstore.hpp"
 
 #include <set>
-#include <iostream>
 
 #include <boost/filesystem/operations.hpp>
 
+#include <components/debug/debuglog.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
-
 #include <components/esm/esmreader.hpp>
 #include <components/esm/esmwriter.hpp>
+
+#include "../mwmechanics/spelllist.hpp"
+
+namespace
+{
+    void readRefs(const ESM::Cell& cell, std::map<ESM::RefNum, std::string>& refs, std::vector<ESM::ESMReader>& readers)
+    {
+        for (size_t i = 0; i < cell.mContextList.size(); i++)
+        {
+            size_t index = cell.mContextList[i].index;
+            if (readers.size() <= index)
+                readers.resize(index + 1);
+            cell.restore(readers[index], i);
+            ESM::CellRef ref;
+            ref.mRefNum.mContentFile = ESM::RefNum::RefNum_NoContentFile;
+            bool deleted = false;
+            while(cell.getNextRef(readers[index], ref, deleted))
+            {
+                if(deleted)
+                    refs.erase(ref.mRefNum);
+                else if (std::find(cell.mMovedRefs.begin(), cell.mMovedRefs.end(), ref.mRefNum) == cell.mMovedRefs.end())
+                {
+                    Misc::StringUtils::lowerCaseInPlace(ref.mRefID);
+                    refs[ref.mRefNum] = ref.mRefID;
+                }
+            }
+        }
+        for(const auto& it : cell.mLeasedRefs)
+        {
+            bool deleted = it.second;
+            if(deleted)
+                refs.erase(it.first.mRefNum);
+            else
+            {
+                ESM::CellRef ref = it.first;
+                Misc::StringUtils::lowerCaseInPlace(ref.mRefID);
+                refs[ref.mRefNum] = ref.mRefID;
+            }
+        }
+    }
+}
 
 namespace MWWorld
 {
@@ -46,11 +86,11 @@ void ESMStore::load(ESM::ESMReader &esm, Loading::Listener* listener)
     const std::vector<ESM::Header::MasterData> &masters = esm.getGameFiles();
     std::vector<ESM::ESMReader> *allPlugins = esm.getGlobalReaderList();
     for (size_t j = 0; j < masters.size(); j++) {
-        ESM::Header::MasterData &mast = const_cast<ESM::Header::MasterData&>(masters[j]);
+        const ESM::Header::MasterData &mast = masters[j];
         std::string fname = mast.name;
         int index = ~0;
         for (int i = 0; i < esm.getIndex(); i++) {
-            const std::string &candidate = allPlugins->at(i).getContext().filename;
+            const std::string candidate = allPlugins->at(i).getContext().filename;
             std::string fnamecandidate = boost::filesystem::path(candidate).filename().string();
             if (Misc::StringUtils::ciEqual(fname, fnamecandidate)) {
                 index = i;
@@ -64,7 +104,7 @@ void ESMStore::load(ESM::ESMReader &esm, Loading::Listener* listener)
                 + ", but it has not been loaded yet. Please check your load order.";
             esm.fail(fstring);
         }
-        mast.index = index;
+        esm.addParentFileIndex(index);
     }
 
     // Loop through all records
@@ -74,25 +114,25 @@ void ESMStore::load(ESM::ESMReader &esm, Loading::Listener* listener)
         esm.getRecHeader();
 
         // Look up the record type.
-        std::map<int, StoreBase *>::iterator it = mStores.find(n.val);
+        std::map<int, StoreBase *>::iterator it = mStores.find(n.intval);
 
         if (it == mStores.end()) {
-            if (n.val == ESM::REC_INFO) {
+            if (n.intval == ESM::REC_INFO) {
                 if (dialogue)
                 {
                     dialogue->readInfo(esm, esm.getIndex() != 0);
                 }
                 else
                 {
-                    std::cerr << "error: info record without dialog" << std::endl;
+                    Log(Debug::Error) << "Error: info record without dialog";
                     esm.skipRecord();
                 }
-            } else if (n.val == ESM::REC_MGEF) {
+            } else if (n.intval == ESM::REC_MGEF) {
                 mMagicEffects.load (esm);
-            } else if (n.val == ESM::REC_SKIL) {
+            } else if (n.intval == ESM::REC_SKIL) {
                 mSkills.load (esm);
             }
-            else if (n.val==ESM::REC_FILT || n.val == ESM::REC_DBGP)
+            else if (n.intval==ESM::REC_FILT || n.intval == ESM::REC_DBGP)
             {
                 // ignore project file only records
                 esm.skipRecord();
@@ -110,7 +150,7 @@ void ESMStore::load(ESM::ESMReader &esm, Loading::Listener* listener)
                 continue;
             }
 
-            if (n.val==ESM::REC_DIAL) {
+            if (n.intval==ESM::REC_DIAL) {
                 dialogue = const_cast<ESM::Dialogue*>(mDialogs.find(id.mId));
             } else {
                 dialogue = 0;
@@ -120,7 +160,7 @@ void ESMStore::load(ESM::ESMReader &esm, Loading::Listener* listener)
     }
 }
 
-void ESMStore::setUp()
+void ESMStore::setUp(bool validateRecords)
 {
     mIds.clear();
 
@@ -137,10 +177,158 @@ void ESMStore::setUp()
                 mIds[*record] = storeIt->first;
         }
     }
+
+    if (mStaticIds.empty())
+        mStaticIds = mIds;
+
     mSkills.setUp();
     mMagicEffects.setUp();
     mAttributes.setUp();
     mDialogs.setUp();
+
+    if (validateRecords)
+    {
+        validate();
+        countRecords();
+    }
+}
+
+void ESMStore::countRecords()
+{
+    if(!mRefCount.empty())
+        return;
+    std::map<ESM::RefNum, std::string> refs;
+    std::vector<ESM::ESMReader> readers;
+    for(auto it = mCells.intBegin(); it != mCells.intEnd(); it++)
+        readRefs(*it, refs, readers);
+    for(auto it = mCells.extBegin(); it != mCells.extEnd(); it++)
+        readRefs(*it, refs, readers);
+    for(const auto& pair : refs)
+        mRefCount[pair.second]++;
+}
+
+int ESMStore::getRefCount(const std::string& id) const
+{
+    const std::string lowerId = Misc::StringUtils::lowerCase(id);
+    auto it = mRefCount.find(lowerId);
+    if(it == mRefCount.end())
+        return 0;
+    return it->second;
+}
+
+void ESMStore::validate()
+{
+    // Cache first class from store - we will use it if current class is not found
+    std::string defaultCls = "";
+    Store<ESM::Class>::iterator it = mClasses.begin();
+    if (it != mClasses.end())
+        defaultCls = it->mId;
+    else
+        throw std::runtime_error("List of NPC classes is empty!");
+
+    // Validate NPCs for non-existing class and faction.
+    // We will replace invalid entries by fixed ones
+    std::vector<ESM::NPC> npcsToReplace;
+    for (ESM::NPC npc : mNpcs)
+    {
+        bool changed = false;
+
+        const std::string npcFaction = npc.mFaction;
+        if (!npcFaction.empty())
+        {
+            const ESM::Faction *fact = mFactions.search(npcFaction);
+            if (!fact)
+            {
+                Log(Debug::Verbose) << "NPC '" << npc.mId << "' (" << npc.mName << ") has nonexistent faction '" << npc.mFaction << "', ignoring it.";
+                npc.mFaction.clear();
+                npc.mNpdt.mRank = 0;
+                changed = true;
+            }
+        }
+
+        std::string npcClass = npc.mClass;
+        if (!npcClass.empty())
+        {
+            const ESM::Class *cls = mClasses.search(npcClass);
+            if (!cls)
+            {
+                Log(Debug::Verbose) << "NPC '" << npc.mId << "' (" << npc.mName << ") has nonexistent class '" << npc.mClass << "', using '" << defaultCls << "' class as replacement.";
+                npc.mClass = defaultCls;
+                changed = true;
+            }
+        }
+
+        if (changed)
+            npcsToReplace.push_back(npc);
+    }
+
+    for (const ESM::NPC &npc : npcsToReplace)
+    {
+        mNpcs.eraseStatic(npc.mId);
+        mNpcs.insertStatic(npc);
+    }
+
+    // Validate spell effects for invalid arguments
+    std::vector<ESM::Spell> spellsToReplace;
+    for (ESM::Spell spell : mSpells)
+    {
+        if (spell.mEffects.mList.empty())
+            continue;
+
+        bool changed = false;
+        auto iter = spell.mEffects.mList.begin();
+        while (iter != spell.mEffects.mList.end())
+        {
+            const ESM::MagicEffect* mgef = mMagicEffects.search(iter->mEffectID);
+            if (!mgef)
+            {
+                Log(Debug::Verbose) << "Spell '" << spell.mId << "' has an invalid effect (index " << iter->mEffectID << ") present. Dropping the effect.";
+                iter = spell.mEffects.mList.erase(iter);
+                changed = true;
+                continue;
+            }
+
+            if (mgef->mData.mFlags & ESM::MagicEffect::TargetSkill)
+            {
+                if (iter->mAttribute != -1)
+                {
+                    iter->mAttribute = -1;
+                    Log(Debug::Verbose) << ESM::MagicEffect::effectIdToString(iter->mEffectID) <<
+                        " effect of spell '" << spell.mId << "' has an attribute argument present. Dropping the argument.";
+                    changed = true;
+                }
+            }
+            else if (mgef->mData.mFlags & ESM::MagicEffect::TargetAttribute)
+            {
+                if (iter->mSkill != -1)
+                {
+                    iter->mSkill = -1;
+                    Log(Debug::Verbose) << ESM::MagicEffect::effectIdToString(iter->mEffectID) <<
+                        " effect of spell '" << spell.mId << "' has a skill argument present. Dropping the argument.";
+                    changed = true;
+                }
+            }
+            else if (iter->mSkill != -1 || iter->mAttribute != -1)
+            {
+                iter->mSkill = -1;
+                iter->mAttribute = -1;
+                Log(Debug::Verbose) << ESM::MagicEffect::effectIdToString(iter->mEffectID) <<
+                    " effect of spell '" << spell.mId << "' has argument(s) present. Dropping the argument(s).";
+                changed = true;
+            }
+
+            ++iter;
+        }
+
+        if (changed)
+            spellsToReplace.emplace_back(spell);
+    }
+
+    for (const ESM::Spell &spell : spellsToReplace)
+    {
+        mSpells.eraseStatic(spell.mId);
+        mSpells.insertStatic(spell);
+    }
 }
 
     int ESMStore::countSavedGameRecords() const
@@ -156,7 +344,8 @@ void ESMStore::setUp()
             +mSpells.getDynamicSize()
             +mWeapons.getDynamicSize()
             +mCreatureLists.getDynamicSize()
-            +mItemLists.getDynamicSize();
+            +mItemLists.getDynamicSize()
+            +mCreatures.getDynamicSize();
     }
 
     void ESMStore::write (ESM::ESMWriter& writer, Loading::Listener& progress) const
@@ -178,6 +367,7 @@ void ESMStore::setUp()
         mNpcs.write (writer, progress);
         mItemLists.write (writer, progress);
         mCreatureLists.write (writer, progress);
+        mCreatures.write (writer, progress);
     }
 
     bool ESMStore::readRecord (ESM::ESMReader& reader, uint32_t type)
@@ -195,24 +385,8 @@ void ESMStore::setUp()
             case ESM::REC_NPC_:
             case ESM::REC_LEVI:
             case ESM::REC_LEVC:
-
-                {
-                    mStores[type]->read (reader);
-                }
-
-                if (type==ESM::REC_NPC_)
-                {
-                    // NPC record will always be last and we know that there can be only one
-                    // dynamic NPC record (player) -> We are done here with dynamic record loading
-                    setUp();
-
-                    const ESM::NPC *player = mNpcs.find ("player");
-
-                    if (!mRaces.find (player->mRace) ||
-                        !mClasses.find (player->mClass))
-                        throw std::runtime_error ("Invalid player record (race or class unavailable");
-                }
-
+            case ESM::REC_CREA:
+                mStores[type]->read (reader);
                 return true;
 
             case ESM::REC_DYNA:
@@ -226,4 +400,34 @@ void ESMStore::setUp()
         }
     }
 
+    void ESMStore::checkPlayer()
+    {
+        setUp();
+
+        const ESM::NPC *player = mNpcs.find ("player");
+
+        if (!mRaces.find (player->mRace) ||
+            !mClasses.find (player->mClass))
+            throw std::runtime_error ("Invalid player record (race or class unavailable");
+    }
+
+    std::pair<std::shared_ptr<MWMechanics::SpellList>, bool> ESMStore::getSpellList(const std::string& originalId) const
+    {
+        const std::string id = Misc::StringUtils::lowerCase(originalId);
+        auto result = mSpellListCache.find(id);
+        std::shared_ptr<MWMechanics::SpellList> ptr;
+        if (result != mSpellListCache.end())
+            ptr = result->second.lock();
+        if (!ptr)
+        {
+            int type = find(id);
+            ptr = std::make_shared<MWMechanics::SpellList>(id, type);
+            if (result != mSpellListCache.end())
+                result->second = ptr;
+            else
+                mSpellListCache.insert({id, ptr});
+            return {ptr, false};
+        }
+        return {ptr, true};
+    }
 } // end namespace

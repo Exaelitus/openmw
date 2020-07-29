@@ -1,16 +1,16 @@
 #ifndef CHARACTER_CREATION_HPP
 #define CHARACTER_CREATION_HPP
 
-#include <components/esm/loadskil.hpp>
 #include <components/esm/loadclas.hpp>
 
+#include <map>
 #include <vector>
 
-#include "../mwmechanics/stat.hpp"
+#include "statswatcher.hpp"
 
-namespace osgViewer
+namespace osg
 {
-    class Viewer;
+    class Group;
 }
 
 namespace Resource
@@ -34,25 +34,31 @@ namespace MWGui
     class ReviewDialog;
     class MessageBoxManager;
 
-    class CharacterCreation
+    class CharacterCreation : public StatsListener
     {
     public:
     typedef std::vector<int> SkillList;
 
-    CharacterCreation(osgViewer::Viewer* viewer, Resource::ResourceSystem* resourceSystem);
-    ~CharacterCreation();
+    CharacterCreation(osg::Group* parent, Resource::ResourceSystem* resourceSystem);
+    virtual ~CharacterCreation();
 
     //Show a dialog
     void spawnDialog(const char id);
 
-    void setValue (const std::string& id, const MWMechanics::AttributeValue& value);
-    void setValue (const std::string& id, const MWMechanics::DynamicStat<float>& value);
-    void setValue(const ESM::Skill::SkillEnum parSkill, const MWMechanics::SkillValue& value);
-    void configureSkills (const SkillList& major, const SkillList& minor);
+    void setValue (const std::string& id, const MWMechanics::AttributeValue& value) override;
+    void setValue (const std::string& id, const MWMechanics::DynamicStat<float>& value) override;
+    void setValue(const ESM::Skill::SkillEnum parSkill, const MWMechanics::SkillValue& value) override;
+    void configureSkills(const SkillList& major, const SkillList& minor) override;
+
+    void onFrame(float duration);
 
     private:
-    osgViewer::Viewer* mViewer;
+    osg::Group* mParent;
     Resource::ResourceSystem* mResourceSystem;
+
+    SkillList mPlayerMajorSkills, mPlayerMinorSkills;
+    std::map<int, MWMechanics::AttributeValue> mPlayerAttributes;
+    std::map<int, MWMechanics::SkillValue> mPlayerSkillValues;
 
     //Dialogs
     TextInputDialog* mNameDialog;
@@ -73,8 +79,9 @@ namespace MWGui
 
     //Class generation vars
     unsigned mGenerateClassStep;                 // Keeps track of current step in Generate Class dialog
+    ESM::Class::Specialization mGenerateClassResponses[3];
     unsigned mGenerateClassSpecializations[3];   // A counter for each specialization which is increased when an answer is chosen
-    std::string mGenerateClass;                  // In order: Stealth, Combat, Magic
+    std::string mGenerateClass;                  // In order: Combat, Magic, Stealth
 
     ////Dialog events
     //Name dialog

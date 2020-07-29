@@ -1,7 +1,8 @@
 #ifndef OPENMW_GUI_SPELLVIEW_H
 #define OPENMW_GUI_SPELLVIEW_H
 
-#include <boost/tuple/tuple.hpp>
+#include <memory>
+#include <tuple>
 
 #include <MyGUI_Widget.h>
 
@@ -18,7 +19,7 @@ namespace MWGui
     class SpellModel;
 
     ///@brief Displays a SpellModel in a list widget
-    class SpellView : public MyGUI::Widget
+    class SpellView final : public MyGUI::Widget
     {
         MYGUI_RTTI_DERIVED(SpellView)
     public:
@@ -46,17 +47,17 @@ namespace MWGui
         /// Fired when a spell was clicked
         EventHandle_ModelIndex eventSpellClicked;
 
-        virtual void initialiseOverride();
+        void initialiseOverride() final;
 
-        virtual void setSize(const MyGUI::IntSize& _value);
-        virtual void setCoord(const MyGUI::IntCoord& _value);
+        void setSize(const MyGUI::IntSize& _value) final;
+        void setCoord(const MyGUI::IntCoord& _value) final;
 
         void resetScrollbars();
 
     private:
         MyGUI::ScrollView* mScrollView;
 
-        std::auto_ptr<SpellModel> mModel;
+        std::unique_ptr<SpellModel> mModel;
 
         /// tracks a row in the spell view
         struct LineInfo

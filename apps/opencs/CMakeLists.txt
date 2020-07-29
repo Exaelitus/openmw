@@ -18,7 +18,8 @@ opencs_hdrs_noqt (model/doc
 
 
 opencs_units (model/world
-    idtable idtableproxymodel regionmap data commanddispatcher idtablebase resourcetable nestedtableproxymodel idtree infotableproxymodel
+    idtable idtableproxymodel regionmap data commanddispatcher idtablebase resourcetable nestedtableproxymodel idtree infotableproxymodel landtexturetableproxymodel
+    actoradapter
     )
 
 
@@ -42,7 +43,7 @@ opencs_units_noqt (model/tools
     mandatoryid skillcheck classcheck factioncheck racecheck soundcheck regioncheck
     birthsigncheck spellcheck referencecheck referenceablecheck scriptcheck bodypartcheck
     startscriptcheck search searchoperation searchstage pathgridcheck soundgencheck magiceffectcheck
-    mergestages gmstcheck topicinfocheck journalcheck
+    mergestages gmstcheck topicinfocheck journalcheck enchantmentcheck
     )
 
 opencs_hdrs_noqt (model/tools
@@ -66,10 +67,11 @@ opencs_hdrs_noqt (view/doc
 
 
 opencs_units (view/world
-    table tablesubview scriptsubview util regionmapsubview tablebottombox creator genericcreator
-    cellcreator referenceablecreator startscriptcreator referencecreator scenesubview
+    table tablesubview scriptsubview util regionmapsubview tablebottombox creator genericcreator globalcreator
+    cellcreator pathgridcreator referenceablecreator startscriptcreator referencecreator scenesubview
     infocreator scriptedit dialoguesubview previewsubview regionmap dragrecordtable nestedtable
     dialoguespinbox recordbuttonbar tableeditidaction scripterrortable extendedcommandconfigurator
+    bodypartcreator landtexturecreator landcreator
     )
 
 opencs_units_noqt (view/world
@@ -80,17 +82,19 @@ opencs_units_noqt (view/world
 
 opencs_units (view/widget
     scenetoolbar scenetool scenetoolmode pushbutton scenetooltoggle scenetoolrun modebutton
-    scenetooltoggle2 completerpopup coloreditor colorpickerpopup droplineedit
+    scenetooltoggle2 scenetooltexturebrush scenetoolshapebrush completerpopup coloreditor colorpickerpopup droplineedit
     )
 
 opencs_units (view/render
     scenewidget worldspacewidget pagedworldspacewidget unpagedworldspacewidget
     previewwidget editmode instancemode instanceselectionmode instancemovemode
+    orbitcameramode pathgridmode selectionmode pathgridselectionmode cameracontroller
+    cellwater terraintexturemode actor terrainselection terrainshapemode brushdraw
     )
 
 opencs_units_noqt (view/render
-    lighting lightingday lightingnight
-    lightingbright object cell terrainstorage tagbase cellarrow cellmarker cellborder
+    lighting lightingday lightingnight lightingbright object cell terrainstorage tagbase
+    cellarrow cellmarker cellborder pathgrid
     )
 
 opencs_hdrs_noqt (view/render
@@ -107,11 +111,12 @@ opencs_units_noqt (view/tools
     )
 
 opencs_units (view/prefs
-    dialogue pagebase page
+    dialogue pagebase page keybindingpage contextmenulist
     )
 
 opencs_units (model/prefs
-    state setting intsetting doublesetting boolsetting enumsetting coloursetting
+    state setting intsetting doublesetting boolsetting enumsetting coloursetting shortcut
+    shortcuteventhandler shortcutmanager shortcutsetting modifiersetting
     )
 
 opencs_units_noqt (model/prefs
@@ -144,41 +149,51 @@ if(WIN32)
     set(QT_USE_QTMAIN TRUE)
 endif(WIN32)
 
-if (DESIRED_QT_VERSION MATCHES 4)
-    include(${QT_USE_FILE})
-    qt4_wrap_ui(OPENCS_UI_HDR ${OPENCS_UI})
-    qt4_wrap_cpp(OPENCS_MOC_SRC ${OPENCS_HDR_QT})
-    qt4_add_resources(OPENCS_RES_SRC ${OPENCS_RES})
-else()
-    qt5_wrap_ui(OPENCS_UI_HDR ${OPENCS_UI})
-    qt5_wrap_cpp(OPENCS_MOC_SRC ${OPENCS_HDR_QT})
-    qt5_add_resources(OPENCS_RES_SRC ${OPENCS_RES})
-endif()
+qt5_wrap_ui(OPENCS_UI_HDR ${OPENCS_UI})
+qt5_wrap_cpp(OPENCS_MOC_SRC ${OPENCS_HDR_QT})
+qt5_add_resources(OPENCS_RES_SRC ${OPENCS_RES})
 
 # for compiled .ui files
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 if(APPLE)
-    set (OPENCS_MAC_ICON ${CMAKE_SOURCE_DIR}/files/mac/openmw-cs.icns)
+    set (OPENCS_MAC_ICON "${CMAKE_SOURCE_DIR}/files/mac/openmw-cs.icns")
+    set (OPENCS_CFG "${OpenMW_BINARY_DIR}/openmw-cs.cfg")
+    set (OPENCS_DEFAULT_FILTERS_FILE "${OpenMW_BINARY_DIR}/resources/defaultfilters")
+    set (OPENCS_OPENMW_CFG "${OpenMW_BINARY_DIR}/openmw.cfg")
 else()
     set (OPENCS_MAC_ICON "")
+    set (OPENCS_CFG "")
+    set (OPENCS_DEFAULT_FILTERS_FILE "")
+    set (OPENCS_OPENMW_CFG "")
 endif(APPLE)
 
-add_executable(openmw-cs
+openmw_add_executable(openmw-cs
     MACOSX_BUNDLE
     ${OPENCS_SRC}
     ${OPENCS_UI_HDR}
     ${OPENCS_MOC_SRC}
     ${OPENCS_RES_SRC}
     ${OPENCS_MAC_ICON}
+    ${OPENCS_CFG}
+    ${OPENCS_DEFAULT_FILTERS_FILE}
+    ${OPENCS_OPENMW_CFG}
 )
 
 if(APPLE)
+    set(OPENCS_BUNDLE_NAME "OpenMW-CS")
+    set(OPENCS_BUNDLE_RESOURCES_DIR "${OpenMW_BINARY_DIR}/${OPENCS_BUNDLE_NAME}.app/Contents/Resources")
+
+    set(OPENMW_MYGUI_FILES_ROOT ${OPENCS_BUNDLE_RESOURCES_DIR})
+    set(OPENMW_SHADERS_ROOT ${OPENCS_BUNDLE_RESOURCES_DIR})
+
+    add_subdirectory(../../files/ ${CMAKE_CURRENT_BINARY_DIR}/files)
+
     set_target_properties(openmw-cs PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${OpenMW_BINARY_DIR}"
-        OUTPUT_NAME "OpenMW-CS"
+        OUTPUT_NAME ${OPENCS_BUNDLE_NAME}
         MACOSX_BUNDLE_ICON_FILE "openmw-cs.icns"
-        MACOSX_BUNDLE_BUNDLE_NAME "OpenCS"
+        MACOSX_BUNDLE_BUNDLE_NAME "OpenMW-CS"
         MACOSX_BUNDLE_GUI_IDENTIFIER "org.openmw.opencs"
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${OPENMW_VERSION}
         MACOSX_BUNDLE_BUNDLE_VERSION ${OPENMW_VERSION}
@@ -187,11 +202,20 @@ if(APPLE)
 
     set_source_files_properties(${OPENCS_MAC_ICON} PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources)
+    set_source_files_properties(${OPENCS_CFG} PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    set_source_files_properties(${OPENCS_DEFAULT_FILTERS_FILE} PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources/resources)
+    set_source_files_properties(${OPENCS_OPENMW_CFG} PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+
+    add_custom_command(TARGET openmw-cs
+        POST_BUILD
+        COMMAND cp "${OpenMW_BINARY_DIR}/resources/version" "${OPENCS_BUNDLE_RESOURCES_DIR}/resources")
 endif(APPLE)
 
 target_link_libraries(openmw-cs
     ${OSG_LIBRARIES}
-    ${OPENTHREADS_LIBRARIES}
     ${OSGTEXT_LIBRARIES}
     ${OSGUTIL_LIBRARIES}
     ${OSGVIEWER_LIBRARIES}
@@ -204,25 +228,23 @@ target_link_libraries(openmw-cs
     components
 )
 
-if (DESIRED_QT_VERSION MATCHES 4)
-    target_link_libraries(openmw-cs
-    ${QT_QTGUI_LIBRARY}
-    ${QT_QTCORE_LIBRARY}
-    ${QT_QTNETWORK_LIBRARY}
-    ${QT_QTOPENGL_LIBRARY})
-
-    if (WIN32)
-        target_link_libraries(openmw-cs ${QT_QTMAIN_LIBRARY})
-    endif()
-else()
-    qt5_use_modules(openmw-cs Widgets Core Network OpenGL)
-endif()
+target_link_libraries(openmw-cs Qt5::Widgets Qt5::Core Qt5::Network Qt5::OpenGL)
 
 if (WIN32)
     target_link_libraries(openmw-cs ${Boost_LOCALE_LIBRARY})
+    INSTALL(TARGETS openmw-cs RUNTIME DESTINATION ".")
+    INSTALL(FILES "${OpenMW_BINARY_DIR}/Debug/openmw-cs.cfg" DESTINATION "." CONFIGURATIONS Debug)
+    INSTALL(FILES "${OpenMW_BINARY_DIR}/Release/openmw-cs.cfg" DESTINATION "." CONFIGURATIONS Release;RelWithDebInfo;MinSizeRel)
 endif()
+
+if (MSVC)
+    # Debug version needs increased number of sections beyond 2^16
+    if (CMAKE_CL_64)
+        set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /bigobj")
+    endif (CMAKE_CL_64)
+endif (MSVC)
 
 
 if(APPLE)
-    INSTALL(TARGETS openmw-cs BUNDLE DESTINATION OpenMW COMPONENT BUNDLE)
+    INSTALL(TARGETS openmw-cs BUNDLE DESTINATION "." COMPONENT Bundle)
 endif()

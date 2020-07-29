@@ -4,36 +4,43 @@
 #include <string>
 #include <map>
 #include <memory>
-
-#include <boost/shared_ptr.hpp>
+#include <vector>
 
 #include <osg/ref_ptr>
 
-#ifndef Q_MOC_RUN
-#include <components/terrain/terraingrid.hpp>
-#endif
-
-#include "object.hpp"
-#include "cellarrow.hpp"
-#include "cellmarker.hpp"
-#include "cellborder.hpp"
+#include "../../model/world/cellcoordinates.hpp"
+#include "terrainstorage.hpp"
 
 class QModelIndex;
 
 namespace osg
 {
     class Group;
+    class Geometry;
+    class Geode;
 }
 
 namespace CSMWorld
 {
     class Data;
-    class CellCoordinates;
+}
+
+namespace Terrain
+{
+    class TerrainGrid;
 }
 
 namespace CSVRender
 {
+    class CellWater;
+    class Pathgrid;
     class TagBase;
+    class Object;
+
+    class CellArrow;
+    class CellBorder;
+    class CellMarker;
+    class CellWater;
 
     class Cell
     {
@@ -41,14 +48,18 @@ namespace CSVRender
             std::string mId;
             osg::ref_ptr<osg::Group> mCellNode;
             std::map<std::string, Object *> mObjects;
-            std::auto_ptr<Terrain::TerrainGrid> mTerrain;
+            std::unique_ptr<Terrain::TerrainGrid> mTerrain;
             CSMWorld::CellCoordinates mCoordinates;
-            std::auto_ptr<CellArrow> mCellArrows[4];
-            std::auto_ptr<CellMarker> mCellMarker;
-            std::auto_ptr<CellBorder> mCellBorder;
+            std::unique_ptr<CellArrow> mCellArrows[4];
+            std::unique_ptr<CellMarker> mCellMarker;
+            std::unique_ptr<CellBorder> mCellBorder;
+            std::unique_ptr<CellWater> mCellWater;
+            std::unique_ptr<Pathgrid> mPathgrid;
             bool mDeleted;
             int mSubMode;
             unsigned int mSubModeElementMask;
+            bool mUpdateLand, mLandDeleted;
+            TerrainStorage *mTerrainStorage;
 
             /// Ignored if cell does not have an object with the given ID.
             ///
@@ -63,6 +74,9 @@ namespace CSVRender
             ///
             /// \return Have any objects been added?
             bool addObjects (int start, int end);
+
+            void updateLand();
+            void unloadLand();
 
         public:
 
@@ -81,6 +95,9 @@ namespace CSVRender
                 bool deleted = false);
 
             ~Cell();
+
+            /// \note Returns the pathgrid representation which will exist as long as the cell exists
+            Pathgrid* getPathgrid() const;
 
             /// \return Did this call result in a modification of the visual representation of
             /// this cell?
@@ -102,6 +119,32 @@ namespace CSVRender
             /// \return Did this call result in a modification of the visual representation of
             /// this cell?
             bool referenceAdded (const QModelIndex& parent, int start, int end);
+
+            void setAlteredHeight(int inCellX, int inCellY, float height);
+
+            float getSumOfAlteredAndTrueHeight(int cellX, int cellY, int inCellX, int inCellY);
+
+            float* getAlteredHeight(int inCellX, int inCellY);
+
+            void resetAlteredHeights();
+
+            void pathgridModified();
+
+            void pathgridRemoved();
+
+            void landDataChanged (const QModelIndex& topLeft, const QModelIndex& bottomRight);
+
+            void landAboutToBeRemoved (const QModelIndex& parent, int start, int end);
+
+            void landAdded (const QModelIndex& parent, int start, int end);
+
+            void landTextureChanged (const QModelIndex& topLeft, const QModelIndex& bottomRight);
+
+            void landTextureAboutToBeRemoved (const QModelIndex& parent, int start, int end);
+
+            void landTextureAdded (const QModelIndex& parent, int start, int end);
+
+            void reloadAssets();
 
             void setSelection (int elementMask, Selection mode);
 
@@ -128,6 +171,8 @@ namespace CSVRender
             /// Erase all overrides and restore the visual representation of the cell to its
             /// true state.
             void reset (unsigned int elementMask);
+
+            friend class CellNodeCallback;
     };
 }
 

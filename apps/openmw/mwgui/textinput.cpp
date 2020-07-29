@@ -42,9 +42,9 @@ namespace MWGui
         setText("LabelT", label);
     }
 
-    void TextInputDialog::open()
+    void TextInputDialog::onOpen()
     {
-        WindowModal::open();
+        WindowModal::onOpen();
         // Make sure the edit box has focus
         MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mTextEdit);
     }
@@ -65,6 +65,9 @@ namespace MWGui
     void TextInputDialog::onTextAccepted(MyGUI::Edit* _sender)
     {
         onOkClicked(_sender);
+
+        // To do not spam onTextAccepted() again and again
+        MWBase::Environment::get().getWindowManager()->injectKeyRelease(MyGUI::KeyCode::None);
     }
 
     std::string TextInputDialog::getTextInput() const

@@ -1,10 +1,10 @@
 #include "myguitexture.hpp"
 
 #include <stdexcept>
-#include <iostream>
 
 #include <osg/Texture2D>
 
+#include <components/debug/debuglog.hpp>
 #include <components/resource/imagemanager.hpp>
 
 namespace osgMyGUI
@@ -16,15 +16,19 @@ namespace osgMyGUI
       , mFormat(MyGUI::PixelFormat::Unknow)
       , mUsage(MyGUI::TextureUsage::Default)
       , mNumElemBytes(0)
+      , mWidth(0)
+      , mHeight(0)
     {
     }
 
     OSGTexture::OSGTexture(osg::Texture2D *texture)
-        : mImageManager(NULL)
+        : mImageManager(nullptr)
         , mTexture(texture)
         , mFormat(MyGUI::PixelFormat::Unknow)
         , mUsage(MyGUI::TextureUsage::Default)
         , mNumElemBytes(0)
+        , mWidth(texture->getTextureWidth())
+        , mHeight(texture->getTextureHeight())
     {
     }
 
@@ -63,6 +67,9 @@ namespace osgMyGUI
         mTexture->setSourceFormat(glfmt);
         mTexture->setSourceType(GL_UNSIGNED_BYTE);
 
+        mWidth = width;
+        mHeight = height;
+
         mTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
         mTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
         mTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -79,6 +86,8 @@ namespace osgMyGUI
         mFormat = MyGUI::PixelFormat::Unknow;
         mUsage = MyGUI::TextureUsage::Default;
         mNumElemBytes = 0;
+        mWidth = 0;
+        mHeight = 0;
     }
 
     void OSGTexture::loadFromFile(const std::string &fname)
@@ -86,39 +95,34 @@ namespace osgMyGUI
         if (!mImageManager)
             throw std::runtime_error("No imagemanager set");
 
-        mTexture = new osg::Texture2D(mImageManager->getImage(fname));
+        osg::ref_ptr<osg::Image> image (mImageManager->getImage(fname));
+        mTexture = new osg::Texture2D(image);
         mTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         mTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+        mTexture->setTextureWidth(image->s());
+        mTexture->setTextureHeight(image->t());
         // disable mip-maps
         mTexture->setFilter(osg::Texture2D::MIN_FILTER, osg::Texture2D::LINEAR);
 
-        // FIXME
-        mFormat = MyGUI::PixelFormat::R8G8B8;
-        mUsage = MyGUI::TextureUsage::Static | MyGUI::TextureUsage::Write;
-        mNumElemBytes = 3; // FIXME
+        mWidth = image->s();
+        mHeight = image->t();
+
+        mUsage = MyGUI::TextureUsage::Static;
     }
 
     void OSGTexture::saveToFile(const std::string &fname)
     {
-        std::cerr << "Would save image to file " << fname << std::endl;
+        Log(Debug::Warning) << "Would save image to file " << fname;
     }
 
     int OSGTexture::getWidth()
     {
-        if(!mTexture.valid())
-            return 0;
-        osg::Image *image = mTexture->getImage();
-        if(image) return image->s();
-        return mTexture->getTextureWidth();
+        return mWidth;
     }
 
     int OSGTexture::getHeight()
     {
-        if(!mTexture.valid())
-            return 0;
-        osg::Image *image = mTexture->getImage();
-        if(image) return image->t();
-        return mTexture->getTextureHeight();
+        return mHeight;
     }
 
     void *OSGTexture::lock(MyGUI::TextureUsage /*access*/)
@@ -128,15 +132,12 @@ namespace osgMyGUI
         if (mLockedImage.valid())
             throw std::runtime_error("Texture already locked");
 
-        mLockedImage = mTexture->getImage();
-        if(!mLockedImage.valid())
-        {
-            mLockedImage = new osg::Image();
-            mLockedImage->allocateImage(
-                mTexture->getTextureWidth(), mTexture->getTextureHeight(), mTexture->getTextureDepth(),
-                mTexture->getSourceFormat(), mTexture->getSourceType()
-            );
-        }
+        mLockedImage = new osg::Image();
+        mLockedImage->allocateImage(
+            mTexture->getTextureWidth(), mTexture->getTextureHeight(), mTexture->getTextureDepth(),
+            mTexture->getSourceFormat(), mTexture->getSourceType()
+        );
+
         return mLockedImage->data();
     }
 

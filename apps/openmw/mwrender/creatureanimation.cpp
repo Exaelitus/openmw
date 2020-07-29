@@ -1,23 +1,32 @@
 #include "creatureanimation.hpp"
 
-#include <components/esm/loadcrea.hpp>
+#include <osg/MatrixTransform>
 
+#include <components/esm/loadcrea.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/attach.hpp>
 #include <components/sceneutil/visitor.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/skeleton.hpp>
 
+#include <components/misc/stringops.hpp>
+
+#include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwmechanics/weapontype.hpp"
+
 #include "../mwworld/class.hpp"
+#include "../mwworld/esmstore.hpp"
 
 namespace MWRender
 {
 
 CreatureAnimation::CreatureAnimation(const MWWorld::Ptr &ptr,
                                      const std::string& model, Resource::ResourceSystem* resourceSystem)
-  : Animation(ptr, osg::ref_ptr<osg::Group>(ptr.getRefData().getBaseNode()), resourceSystem)
+  : ActorAnimation(ptr, osg::ref_ptr<osg::Group>(ptr.getRefData().getBaseNode()), resourceSystem)
 {
     MWWorld::LiveCellRef<ESM::Creature> *ref = mPtr.get<ESM::Creature>();
 
@@ -26,14 +35,14 @@ CreatureAnimation::CreatureAnimation(const MWWorld::Ptr &ptr,
         setObjectRoot(model, false, false, true);
 
         if((ref->mBase->mFlags&ESM::Creature::Bipedal))
-            addAnimSource("meshes\\xbase_anim.nif");
-        addAnimSource(model);
+            addAnimSource("meshes\\xbase_anim.nif", model);
+        addAnimSource(model, model);
     }
 }
 
 
 CreatureWeaponAnimation::CreatureWeaponAnimation(const MWWorld::Ptr &ptr, const std::string& model, Resource::ResourceSystem* resourceSystem)
-    : Animation(ptr, osg::ref_ptr<osg::Group>(ptr.getRefData().getBaseNode()), resourceSystem)
+    : ActorAnimation(ptr, osg::ref_ptr<osg::Group>(ptr.getRefData().getBaseNode()), resourceSystem)
     , mShowWeapons(false)
     , mShowCarriedLeft(false)
 {
@@ -44,15 +53,17 @@ CreatureWeaponAnimation::CreatureWeaponAnimation(const MWWorld::Ptr &ptr, const 
         setObjectRoot(model, true, false, true);
 
         if((ref->mBase->mFlags&ESM::Creature::Bipedal))
-            addAnimSource("meshes\\xbase_anim.nif");
-        addAnimSource(model);
+        {
+            addAnimSource("meshes\\xbase_anim.nif", model);
+        }
+        addAnimSource(model, model);
 
-        mPtr.getClass().getInventoryStore(mPtr).setListener(this, mPtr);
+        mPtr.getClass().getInventoryStore(mPtr).setInvListener(this, mPtr);
 
         updateParts();
     }
 
-    mWeaponAnimationTime = boost::shared_ptr<WeaponAnimationTime>(new WeaponAnimationTime(this));
+    mWeaponAnimationTime = std::shared_ptr<WeaponAnimationTime>(new WeaponAnimationTime(this));
 }
 
 void CreatureWeaponAnimation::showWeapons(bool showWeapon)
@@ -75,8 +86,13 @@ void CreatureWeaponAnimation::showCarriedLeft(bool show)
 
 void CreatureWeaponAnimation::updateParts()
 {
+    mAmmunition.reset();
     mWeapon.reset();
     mShield.reset();
+
+    updateHolsteredWeapon(!mShowWeapons);
+    updateQuiver();
+    updateHolsteredShield(mShowCarriedLeft);
 
     if (mShowWeapons)
         updatePart(mWeapon, MWWorld::InventoryStore::Slot_CarriedRight);
@@ -89,73 +105,149 @@ void CreatureWeaponAnimation::updatePart(PartHolderPtr& scene, int slot)
     if (!mObjectRoot)
         return;
 
-    MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
-    MWWorld::ContainerStoreIterator it = inv.getSlot(slot);
+    const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
+    MWWorld::ConstContainerStoreIterator it = inv.getSlot(slot);
 
     if (it == inv.end())
     {
         scene.reset();
         return;
     }
-    MWWorld::Ptr item = *it;
+    MWWorld::ConstPtr item = *it;
 
     std::string bonename;
+    std::string itemModel = item.getClass().getModel(item);
     if (slot == MWWorld::InventoryStore::Slot_CarriedRight)
-        bonename = "Weapon Bone";
-    else
-        bonename = "Shield Bone";
-
-    osg::ref_ptr<osg::Node> node = mResourceSystem->getSceneManager()->getInstance(item.getClass().getModel(item));
-    osg::ref_ptr<osg::Node> attached = SceneUtil::attach(node, mObjectRoot, bonename, bonename);
-    mResourceSystem->getSceneManager()->notifyAttached(attached);
-
-    scene.reset(new PartHolder(attached));
-
-    if (!item.getClass().getEnchantment(item).empty())
-        addGlow(attached, getEnchantmentColor(item));
-
-    // Crossbows start out with a bolt attached
-    // FIXME: code duplicated from NpcAnimation
-    if (slot == MWWorld::InventoryStore::Slot_CarriedRight &&
-            item.getTypeName() == typeid(ESM::Weapon).name() &&
-            item.get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::MarksmanCrossbow)
     {
-        MWWorld::ContainerStoreIterator ammo = inv.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
-        if (ammo != inv.end() && ammo->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::Bolt)
-            attachArrow();
+        if(item.getTypeName() == typeid(ESM::Weapon).name())
+        {
+            int type = item.get<ESM::Weapon>()->mBase->mData.mType;
+            bonename = MWMechanics::getWeaponType(type)->mAttachBone;
+            if (bonename != "Weapon Bone")
+            {
+                const NodeMap& nodeMap = getNodeMap();
+                NodeMap::const_iterator found = nodeMap.find(Misc::StringUtils::lowerCase(bonename));
+                if (found == nodeMap.end())
+                    bonename = "Weapon Bone";
+            }
+        }
         else
-            mAmmunition.reset();
+            bonename = "Weapon Bone";
     }
     else
-        mAmmunition.reset();
+    {
+        bonename = "Shield Bone";
+        if (item.getTypeName() == typeid(ESM::Armor).name())
+        {
+            // Shield body part model should be used if possible.
+            const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
+            for (const auto& part : item.get<ESM::Armor>()->mBase->mParts.mParts)
+            {
+                // Assume all creatures use the male mesh.
+                if (part.mPart != ESM::PRT_Shield || part.mMale.empty())
+                    continue;
+                const ESM::BodyPart *bodypart = store.get<ESM::BodyPart>().search(part.mMale);
+                if (bodypart && bodypart->mData.mType == ESM::BodyPart::MT_Armor && !bodypart->mModel.empty())
+                {
+                    itemModel = "meshes\\" + bodypart->mModel;
+                    break;
+                }
+            }
+        }
+    }
 
-    boost::shared_ptr<SceneUtil::ControllerSource> source;
+    try
+    {
+        osg::ref_ptr<osg::Node> node = mResourceSystem->getSceneManager()->getInstance(itemModel);
 
-    if (slot == MWWorld::InventoryStore::Slot_CarriedRight)
-        source = mWeaponAnimationTime;
-    else
-        source.reset(new NullAnimationTime);
+        const NodeMap& nodeMap = getNodeMap();
+        NodeMap::const_iterator found = nodeMap.find(Misc::StringUtils::lowerCase(bonename));
+        if (found == nodeMap.end())
+            throw std::runtime_error("Can't find attachment node " + bonename);
+        osg::ref_ptr<osg::Node> attached = SceneUtil::attach(node, mObjectRoot, bonename, found->second.get());
 
-    SceneUtil::AssignControllerSourcesVisitor assignVisitor(source);
-    attached->accept(assignVisitor);
+        scene.reset(new PartHolder(attached));
+
+        if (!item.getClass().getEnchantment(item).empty())
+            mGlowUpdater = SceneUtil::addEnchantedGlow(attached, mResourceSystem, item.getClass().getEnchantmentColor(item));
+
+        // Crossbows start out with a bolt attached
+        // FIXME: code duplicated from NpcAnimation
+        if (slot == MWWorld::InventoryStore::Slot_CarriedRight &&
+                item.getTypeName() == typeid(ESM::Weapon).name() &&
+                item.get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::MarksmanCrossbow)
+        {
+            const ESM::WeaponType* weaponInfo = MWMechanics::getWeaponType(ESM::Weapon::MarksmanCrossbow);
+            MWWorld::ConstContainerStoreIterator ammo = inv.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
+            if (ammo != inv.end() && ammo->get<ESM::Weapon>()->mBase->mData.mType == weaponInfo->mAmmoType)
+                attachArrow();
+            else
+                mAmmunition.reset();
+        }
+        else
+            mAmmunition.reset();
+
+        std::shared_ptr<SceneUtil::ControllerSource> source;
+
+        if (slot == MWWorld::InventoryStore::Slot_CarriedRight)
+            source = mWeaponAnimationTime;
+        else
+            source.reset(new NullAnimationTime);
+
+        SceneUtil::AssignControllerSourcesVisitor assignVisitor(source);
+        attached->accept(assignVisitor);
+    }
+    catch (std::exception& e)
+    {
+        Log(Debug::Error) << "Can not add creature part: " << e.what();
+    }
+}
+
+bool CreatureWeaponAnimation::isArrowAttached() const
+{
+    return mAmmunition != nullptr;
 }
 
 void CreatureWeaponAnimation::attachArrow()
 {
     WeaponAnimation::attachArrow(mPtr);
+
+    const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
+    MWWorld::ConstContainerStoreIterator ammo = inv.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
+    if (ammo != inv.end() && !ammo->getClass().getEnchantment(*ammo).empty())
+    {
+        osg::Group* bone = getArrowBone();
+        if (bone != nullptr && bone->getNumChildren())
+            SceneUtil::addEnchantedGlow(bone->getChild(0), mResourceSystem, ammo->getClass().getEnchantmentColor(*ammo));
+    }
+
+    updateQuiver();
 }
 
 void CreatureWeaponAnimation::releaseArrow(float attackStrength)
 {
     WeaponAnimation::releaseArrow(mPtr, attackStrength);
+    updateQuiver();
 }
 
 osg::Group *CreatureWeaponAnimation::getArrowBone()
 {
     if (!mWeapon)
-        return NULL;
+        return nullptr;
 
-    SceneUtil::FindByNameVisitor findVisitor ("ArrowBone");
+    if (!mPtr.getClass().hasInventoryStore(mPtr))
+        return nullptr;
+
+    const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
+    MWWorld::ConstContainerStoreIterator weapon = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+    if(weapon == inv.end() || weapon->getTypeName() != typeid(ESM::Weapon).name())
+        return nullptr;
+
+    int type = weapon->get<ESM::Weapon>()->mBase->mData.mType;
+    int ammoType = MWMechanics::getWeaponType(type)->mAmmoType;
+
+    SceneUtil::FindByNameVisitor findVisitor (MWMechanics::getWeaponType(ammoType)->mAttachBone);
+
     mWeapon->getNode()->accept(findVisitor);
 
     return findVisitor.mFoundNode;
@@ -163,7 +255,7 @@ osg::Group *CreatureWeaponAnimation::getArrowBone()
 
 osg::Node *CreatureWeaponAnimation::getWeaponNode()
 {
-    return mWeapon ? mWeapon->getNode().get() : NULL;
+    return mWeapon ? mWeapon->getNode().get() : nullptr;
 }
 
 Resource::ResourceSystem *CreatureWeaponAnimation::getResourceSystem()
@@ -181,7 +273,7 @@ osg::Vec3f CreatureWeaponAnimation::runAnimation(float duration)
 {
     osg::Vec3f ret = Animation::runAnimation(duration);
 
-    WeaponAnimation::configureControllers(mPtr.getRefData().getPosition().rot[0]);
+    WeaponAnimation::configureControllers(mPtr.getRefData().getPosition().rot[0] + getBodyPitchRadians());
 
     return ret;
 }

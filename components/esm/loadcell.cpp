@@ -1,7 +1,6 @@
 #include "loadcell.hpp"
 
 #include <string>
-#include <sstream>
 #include <list>
 
 #include <boost/concept_check.hpp>
@@ -22,12 +21,12 @@ namespace
 
         // If we have an index value that does not make sense, assume that it was an addition
         // by the present plugin (but a faulty one)
-        if (local && local <= reader.getGameFiles().size())
+        if (local && local <= reader.getParentFileIndices().size())
         {
             // If the most significant 8 bits are used, then this reference already exists.
             // In this case, do not spawn a new reference, but overwrite the old one.
             refNum.mIndex &= 0x00ffffff; // delete old plugin ID
-            refNum.mContentFile = reader.getGameFiles()[local-1].index;
+            refNum.mContentFile = reader.getParentFileIndices()[local-1];
         }
         else
         {
@@ -69,7 +68,7 @@ namespace ESM
         while (!isLoaded && esm.hasMoreSubs())
         {
             esm.getSubName();
-            switch (esm.retSubName().val)
+            switch (esm.retSubName().intval)
             {
                 case ESM::SREC_NAME:
                     mName = esm.getHString();
@@ -96,7 +95,7 @@ namespace ESM
 
         if (mCellId.mPaged)
         {
-            mCellId.mWorldspace = "sys::default";
+            mCellId.mWorldspace = ESM::CellId::sDefaultWorldspace;
             mCellId.mIndex.mX = mData.mX;
             mCellId.mIndex.mY = mData.mY;
         }
@@ -111,10 +110,11 @@ namespace ESM
     void Cell::loadCell(ESMReader &esm, bool saveContext)
     {
         bool isLoaded = false;
+        mHasAmbi = false;
         while (!isLoaded && esm.hasMoreSubs())
         {
             esm.getSubName();
-            switch (esm.retSubName().val)
+            switch (esm.retSubName().intval)
             {
                 case ESM::FourCC<'I','N','T','V'>::value:
                     int waterl;
@@ -128,6 +128,7 @@ namespace ESM
                     break;
                 case ESM::FourCC<'A','M','B','I'>::value:
                     esm.getHT(mAmbi);
+                    mHasAmbi = true;
                     break;
                 case ESM::FourCC<'R','G','N','N'>::value:
                     mRegion = esm.getHString();
@@ -161,7 +162,7 @@ namespace ESM
 
     void Cell::save(ESMWriter &esm, bool isDeleted) const
     {
-        esm.writeHNOCString("NAME", mName);
+        esm.writeHNCString("NAME", mName);
         esm.writeHNT("DATA", mData, 12);
 
         if (isDeleted)
@@ -183,7 +184,12 @@ namespace ESM
             if (mData.mFlags & QuasiEx)
                 esm.writeHNOCString("RGNN", mRegion);
             else
-                esm.writeHNT("AMBI", mAmbi, 16);
+            {
+                // Try to avoid saving ambient lighting information when it's unnecessary.
+                // This is to fix black lighting in resaved cell records that lack this information.
+                if (mHasAmbi)
+                    esm.writeHNT("AMBI", mAmbi, 16);
+            }
         }
         else
         {
@@ -204,15 +210,15 @@ namespace ESM
     std::string Cell::getDescription() const
     {
         if (mData.mFlags & Interior)
-        {
             return mName;
-        }
-        else
-        {
-            std::ostringstream stream;
-            stream << mData.mX << ", " << mData.mY;
-            return stream.str();
-        }
+
+        std::string cellGrid = "(" + std::to_string(mData.mX) + ", " + std::to_string(mData.mY) + ")";
+        if (!mName.empty())
+            return mName + ' ' + cellGrid;
+        // FIXME: should use sDefaultCellname GMST instead, but it's not available in this scope
+        std::string region = !mRegion.empty() ? mRegion : "Wilderness";
+
+        return region + ' ' + cellGrid;
     }
 
     bool Cell::getNextRef(ESMReader &esm, CellRef &ref, bool &isDeleted, bool ignoreMoves, MovedCellRef *mref)
@@ -275,6 +281,7 @@ namespace ESM
         mData.mX = 0;
         mData.mY = 0;
 
+        mHasAmbi = true;
         mAmbi.mAmbient = 0;
         mAmbi.mSunlight = 0;
         mAmbi.mFog = 0;

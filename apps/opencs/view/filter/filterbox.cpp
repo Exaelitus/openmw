@@ -21,8 +21,8 @@ CSVFilter::FilterBox::FilterBox (CSMWorld::Data& data, QWidget *parent)
     setLayout (layout);
 
     connect (mRecordFilterBox,
-        SIGNAL (filterChanged (boost::shared_ptr<CSMFilter::Node>)),
-        this, SIGNAL (recordFilterChanged (boost::shared_ptr<CSMFilter::Node>)));
+        SIGNAL (filterChanged (std::shared_ptr<CSMFilter::Node>)),
+        this, SIGNAL (recordFilterChanged (std::shared_ptr<CSMFilter::Node>)));
 
     setAcceptDrops(true);
 }
@@ -38,9 +38,9 @@ void CSVFilter::FilterBox::dropEvent (QDropEvent* event)
     if (!mime) // May happen when non-records (e.g. plain text) are dragged and dropped
         return;
 
-    std::vector<CSMWorld::UniversalId> data = mime->getData();
+    std::vector<CSMWorld::UniversalId> universalIdData = mime->getData();
 
-    emit recordDropped(data, event->proposedAction());
+    emit recordDropped(universalIdData, event->proposedAction());
 }
 
 void CSVFilter::FilterBox::dragEnterEvent (QDragEnterEvent* event)

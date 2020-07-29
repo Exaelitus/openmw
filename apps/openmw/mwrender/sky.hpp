@@ -7,6 +7,12 @@
 
 #include <osg/ref_ptr>
 #include <osg/Vec4f>
+#include <osg/Uniform>
+
+namespace osg
+{
+    class Camera;
+}
 
 namespace osg
 {
@@ -19,6 +25,7 @@ namespace osg
 namespace osgParticle
 {
     class ParticleSystem;
+    class BoxPlacer;
 }
 
 namespace Resource
@@ -33,6 +40,7 @@ namespace MWRender
     class CloudUpdater;
     class Sun;
     class Moon;
+    class RainCounter;
     class RainShooter;
     class RainFader;
     class AlphaFader;
@@ -58,7 +66,12 @@ namespace MWRender
 
         float mFogDepth;
 
+        float mDLFogFactor;
+        float mDLFogOffset;
+
         float mWindSpeed;
+        float mCurrentWindSpeed;
+        float mNextWindSpeed;
 
         float mCloudSpeed;
 
@@ -76,8 +89,12 @@ namespace MWRender
         std::string mRainEffect;
         float mEffectFade;
 
+        float mRainDiameter;
+        float mRainMinHeight;
+        float mRainMaxHeight;
         float mRainSpeed;
-        float mRainFrequency;
+        float mRainEntranceSpeed;
+        int mRainMaxRaindrops;
     };
 
     struct MoonState
@@ -137,6 +154,10 @@ namespace MWRender
 
         void sunDisable();
 
+        bool isEnabled();
+
+        bool hasRain();
+
         void setRainSpeed(float speed);
 
         void setStormDirection(const osg::Vec3f& direction);
@@ -156,15 +177,23 @@ namespace MWRender
 
         void listAssetsToPreload(std::vector<std::string>& models, std::vector<std::string>& textures);
 
+        void setCamera(osg::Camera *camera);
+
+        void setRainIntensityUniform(osg::Uniform *uniform);
+
     private:
         void create();
         ///< no need to call this, automatically done on first enable()
 
         void createRain();
         void destroyRain();
+        void switchUnderwaterRain();
         void updateRainParameters();
 
         Resource::SceneManager* mSceneManager;
+
+        osg::Camera *mCamera;
+        osg::Uniform *mRainIntensityUniform;
 
         osg::ref_ptr<osg::Group> mRootNode;
         osg::ref_ptr<osg::Group> mEarlyRenderBinRoot;
@@ -189,12 +218,14 @@ namespace MWRender
 
         osg::ref_ptr<AtmosphereUpdater> mAtmosphereUpdater;
 
-        std::auto_ptr<Sun> mSun;
-        std::auto_ptr<Moon> mMasser;
-        std::auto_ptr<Moon> mSecunda;
+        std::unique_ptr<Sun> mSun;
+        std::unique_ptr<Moon> mMasser;
+        std::unique_ptr<Moon> mSecunda;
 
         osg::ref_ptr<osg::Group> mRainNode;
         osg::ref_ptr<osgParticle::ParticleSystem> mRainParticleSystem;
+        osg::ref_ptr<osgParticle::BoxPlacer> mPlacer;
+        osg::ref_ptr<RainCounter> mCounter;
         osg::ref_ptr<RainShooter> mRainShooter;
         osg::ref_ptr<RainFader> mRainFader;
 
@@ -211,7 +242,7 @@ namespace MWRender
 
         osg::Vec3f mStormDirection;
 
-        // remember some settings so we don't have to apply them again if they didnt change
+        // remember some settings so we don't have to apply them again if they didn't change
         std::string mClouds;
         std::string mNextClouds;
         float mCloudBlendFactor;
@@ -228,11 +259,17 @@ namespace MWRender
         bool mRainEnabled;
         std::string mRainEffect;
         float mRainSpeed;
-        float mRainFrequency;
+        float mRainDiameter;
+        float mRainMinHeight;
+        float mRainMaxHeight;
+        float mRainEntranceSpeed;
+        int mRainMaxRaindrops;
         float mWindSpeed;
 
         bool mEnabled;
         bool mSunEnabled;
+
+        float mWeatherAlpha;
 
         osg::Vec4f mMoonScriptColor;
     };

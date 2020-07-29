@@ -1,21 +1,16 @@
 #include "repair.hpp"
 
-#include <boost/format.hpp>
-
 #include <components/misc/rng.hpp>
 
 #include "../mwbase/world.hpp"
 #include "../mwbase/environment.hpp"
-#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
-#include "../mwbase/soundmanager.hpp"
 
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 
 #include "creaturestats.hpp"
-#include "npcstats.hpp"
 #include "actorutil.hpp"
 
 namespace MWMechanics
@@ -35,15 +30,14 @@ void Repair::repair(const MWWorld::Ptr &itemToRepair)
     mTool.getCellRef().setCharge(uses-1);
 
     MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
-    MWMechanics::NpcStats& npcStats = player.getClass().getNpcStats(player);
 
     float fatigueTerm = stats.getFatigueTerm();
-    int pcStrength = stats.getAttribute(ESM::Attribute::Strength).getModified();
-    int pcLuck = stats.getAttribute(ESM::Attribute::Luck).getModified();
-    int armorerSkill = npcStats.getSkill(ESM::Skill::Armorer).getModified();
+    float pcStrength = stats.getAttribute(ESM::Attribute::Strength).getModified();
+    float pcLuck = stats.getAttribute(ESM::Attribute::Luck).getModified();
+    float armorerSkill = player.getClass().getSkill(player, ESM::Skill::Armorer);
 
     float fRepairAmountMult = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>()
-            .find("fRepairAmountMult")->getFloat();
+            .find("fRepairAmountMult")->mValue.getFloat();
 
     float toolQuality = ref->mBase->mData.mQuality;
 
@@ -71,27 +65,27 @@ void Repair::repair(const MWWorld::Ptr &itemToRepair)
         // increase skill
         player.getClass().skillUsageSucceeded(player, ESM::Skill::Armorer, 0);
 
-        MWBase::Environment::get().getSoundManager()->playSound("Repair",1,1);
+        MWBase::Environment::get().getWindowManager()->playSound("Repair");
         MWBase::Environment::get().getWindowManager()->messageBox("#{sRepairSuccess}");
     }
     else
     {
-        MWBase::Environment::get().getSoundManager()->playSound("Repair Fail",1,1);
+        MWBase::Environment::get().getWindowManager()->playSound("Repair Fail");
         MWBase::Environment::get().getWindowManager()->messageBox("#{sRepairFailed}");
     }
 
     // tool used up?
     if (mTool.getCellRef().getCharge() == 0)
     {
-        MWWorld::Ptr player = getPlayer();
         MWWorld::ContainerStore& store = player.getClass().getContainerStore(player);
 
         store.remove(mTool, 1, player);
 
         std::string message = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>()
-                .find("sNotifyMessage51")->getString();
+                .find("sNotifyMessage51")->mValue.getString();
+        message = Misc::StringUtils::format(message, mTool.getClass().getName(mTool));
 
-        MWBase::Environment::get().getWindowManager()->messageBox((boost::format(message) % mTool.getClass().getName(mTool)).str());
+        MWBase::Environment::get().getWindowManager()->messageBox(message);
 
         // try to find a new tool of the same ID
         for (MWWorld::ContainerStoreIterator iter (store.begin());
@@ -100,6 +94,9 @@ void Repair::repair(const MWWorld::Ptr &itemToRepair)
             if (Misc::StringUtils::ciEqual(iter->getCellRef().getRefId(), mTool.getCellRef().getRefId()))
             {
                 mTool = *iter;
+
+                MWBase::Environment::get().getWindowManager()->playSound("Item Repair Up");
+
                 break;
             }
         }

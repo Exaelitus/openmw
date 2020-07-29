@@ -4,17 +4,19 @@
 
 #include "../mwworld/esmstore.hpp"
 
-#include <components/compiler/extensions.hpp>
 #include <components/compiler/opcodes.hpp>
 
 #include <components/interpreter/interpreter.hpp>
 #include <components/interpreter/runtime.hpp>
 #include <components/interpreter/opcodes.hpp>
 
-#include "../mwbase/environment.hpp"
-#include "../mwbase/world.hpp"
-#include "../mwworld/player.hpp"
+#include "../mwworld/actionteleport.hpp"
 #include "../mwworld/cellstore.hpp"
+#include "../mwbase/environment.hpp"
+#include "../mwworld/player.hpp"
+#include "../mwbase/statemanager.hpp"
+#include "../mwbase/windowmanager.hpp"
+#include "../mwbase/world.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 
@@ -34,6 +36,52 @@ namespace MWScript
                 }
         };
 
+        class OpTestCells : public Interpreter::Opcode0
+        {
+            public:
+
+                virtual void execute (Interpreter::Runtime& runtime)
+                {
+                    if (MWBase::Environment::get().getStateManager()->getState() != MWBase::StateManager::State_NoGame)
+                    {
+                        runtime.getContext().report("Use TestCells from the main menu, when there is no active game session.");
+                        return;
+                    }
+
+                    bool wasConsole = MWBase::Environment::get().getWindowManager()->isConsoleMode();
+                    if (wasConsole)
+                        MWBase::Environment::get().getWindowManager()->toggleConsole();
+
+                    MWBase::Environment::get().getWorld()->testExteriorCells();
+
+                    if (wasConsole)
+                        MWBase::Environment::get().getWindowManager()->toggleConsole();
+                }
+        };
+
+        class OpTestInteriorCells : public Interpreter::Opcode0
+        {
+            public:
+
+                virtual void execute (Interpreter::Runtime& runtime)
+                {
+                    if (MWBase::Environment::get().getStateManager()->getState() != MWBase::StateManager::State_NoGame)
+                    {
+                        runtime.getContext().report("Use TestInteriorCells from the main menu, when there is no active game session.");
+                        return;
+                    }
+
+                    bool wasConsole = MWBase::Environment::get().getWindowManager()->isConsoleMode();
+                    if (wasConsole)
+                        MWBase::Environment::get().getWindowManager()->toggleConsole();
+
+                    MWBase::Environment::get().getWorld()->testInteriorCells();
+
+                    if (wasConsole)
+                        MWBase::Environment::get().getWindowManager()->toggleConsole();
+                }
+        };
+
         class OpCOC : public Interpreter::Opcode0
         {
             public:
@@ -45,19 +93,19 @@ namespace MWScript
 
                     ESM::Position pos;
                     MWBase::World *world = MWBase::Environment::get().getWorld();
+                    const MWWorld::Ptr playerPtr = world->getPlayerPtr();
 
-                    world->getPlayer().setTeleported(true);
                     if (world->findExteriorPosition(cell, pos))
                     {
-                        world->changeToExteriorCell(pos, true);
-                        world->fixPosition(world->getPlayerPtr());
+                        MWWorld::ActionTeleport("", pos, false).execute(playerPtr);
+                        world->adjustPosition(playerPtr, false);
                     }
                     else
                     {
                         // Change to interior even if findInteriorPosition()
                         // yields false. In this case position will be zero-point.
                         world->findInteriorPosition(cell, pos);
-                        world->changeToInteriorCell(cell, pos, true);
+                        MWWorld::ActionTeleport(cell, pos, false).execute(playerPtr);
                     }
                 }
         };
@@ -76,14 +124,15 @@ namespace MWScript
 
                     ESM::Position pos;
                     MWBase::World *world = MWBase::Environment::get().getWorld();
-                    world->getPlayer().setTeleported(true);
+                    const MWWorld::Ptr playerPtr = world->getPlayerPtr();
+
                     world->indexToPosition (x, y, pos.pos[0], pos.pos[1], true);
                     pos.pos[2] = 0;
 
                     pos.rot[0] = pos.rot[1] = pos.rot[2] = 0;
 
-                    world->changeToExteriorCell (pos, true);
-                    world->fixPosition(world->getPlayerPtr());
+                    MWWorld::ActionTeleport("", pos, false).execute(playerPtr);
+                    world->adjustPosition(playerPtr, false);
                 }
         };
 
@@ -203,6 +252,8 @@ namespace MWScript
         void installOpcodes (Interpreter::Interpreter& interpreter)
         {
             interpreter.installSegment5 (Compiler::Cell::opcodeCellChanged, new OpCellChanged);
+            interpreter.installSegment5 (Compiler::Cell::opcodeTestCells, new OpTestCells);
+            interpreter.installSegment5 (Compiler::Cell::opcodeTestInteriorCells, new OpTestInteriorCells);
             interpreter.installSegment5 (Compiler::Cell::opcodeCOC, new OpCOC);
             interpreter.installSegment5 (Compiler::Cell::opcodeCOE, new OpCOE);
             interpreter.installSegment5 (Compiler::Cell::opcodeGetInterior, new OpGetInterior);

@@ -1,6 +1,8 @@
 #include "environment.hpp"
 
 #include <cassert>
+#include <chrono>
+#include <thread>
 
 #include "world.hpp"
 #include "scriptmanager.hpp"
@@ -17,7 +19,7 @@ MWBase::Environment *MWBase::Environment::sThis = 0;
 MWBase::Environment::Environment()
 : mWorld (0), mSoundManager (0), mScriptManager (0), mWindowManager (0),
   mMechanicsManager (0),  mDialogueManager (0), mJournal (0), mInputManager (0), mStateManager (0),
-  mFrameDuration (0)
+  mFrameDuration (0), mFrameRateLimit(0.f)
 {
     assert (!sThis);
     sThis = this;
@@ -77,6 +79,29 @@ void MWBase::Environment::setStateManager (StateManager *stateManager)
 void MWBase::Environment::setFrameDuration (float duration)
 {
     mFrameDuration = duration;
+}
+
+void MWBase::Environment::setFrameRateLimit(float limit)
+{
+    mFrameRateLimit = limit;
+}
+
+float MWBase::Environment::getFrameRateLimit() const
+{
+    return mFrameRateLimit;
+}
+
+void MWBase::Environment::limitFrameRate(double dt) const
+{
+    if (mFrameRateLimit > 0.f)
+    {
+        double thisFrameTime = dt;
+        double minFrameTime = 1.0 / static_cast<double>(mFrameRateLimit);
+        if (thisFrameTime < minFrameTime)
+        {
+            std::this_thread::sleep_for(std::chrono::duration<double>(minFrameTime - thisFrameTime));
+        }
+    }
 }
 
 MWBase::World *MWBase::Environment::getWorld() const
@@ -172,4 +197,10 @@ const MWBase::Environment& MWBase::Environment::get()
 {
     assert (sThis);
     return *sThis;
+}
+
+void MWBase::Environment::reportStats(unsigned int frameNumber, osg::Stats& stats) const
+{
+    mMechanicsManager->reportStats(frameNumber, stats);
+    mWorld->reportStats(frameNumber, stats);
 }

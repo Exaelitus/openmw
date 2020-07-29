@@ -1,6 +1,5 @@
 #include "manager.hpp"
 
-#include <cctype>
 #include <stdexcept>
 
 #include <components/misc/stringops.hpp>
@@ -39,6 +38,12 @@ namespace VFS
 
     Manager::~Manager()
     {
+        reset();
+    }
+
+    void Manager::reset()
+    {
+        mIndex.clear();
         for (std::vector<Archive*>::iterator it = mArchives.begin(); it != mArchives.end(); ++it)
             delete *it;
         mArchives.clear();

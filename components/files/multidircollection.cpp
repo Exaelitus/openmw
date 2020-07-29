@@ -1,14 +1,8 @@
 #include "multidircollection.hpp"
 
-#include <cctype>
-
-#include <algorithm>
-#include <stdexcept>
-#include <iostream>
-
 #include <boost/filesystem.hpp>
 
-#include <components/misc/stringops.hpp>
+#include <components/debug/debuglog.hpp>
 
 namespace Files
 {
@@ -52,7 +46,7 @@ namespace Files
         {
             if (!boost::filesystem::is_directory(*iter))
             {
-                std::cout << "Skipping invalid directory: " << (*iter).string() << std::endl;
+                Log(Debug::Info) << "Skipping invalid directory: " << (*iter).string();
                 continue;
             }
 

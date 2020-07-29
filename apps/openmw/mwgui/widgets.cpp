@@ -23,8 +23,8 @@ namespace MWGui
 
         MWSkill::MWSkill()
             : mSkillId(ESM::Skill::Length)
-            , mSkillNameWidget(NULL)
-            , mSkillValueWidget(NULL)
+            , mSkillNameWidget(nullptr)
+            , mSkillValueWidget(nullptr)
         {
         }
 
@@ -41,7 +41,7 @@ namespace MWGui
             else if (skill < ESM::Skill::Length)
                 setSkillId(static_cast<ESM::Skill::SkillEnum>(skill));
             else
-                throw new std::runtime_error("Skill number out of range");
+                throw std::runtime_error("Skill number out of range");
         }
 
         void MWSkill::setSkillValue(const SkillValue& value)
@@ -105,7 +105,7 @@ namespace MWGui
             assignWidget(button, "StatValueButton");
             if (button)
             {
-                mSkillNameWidget = button;
+                mSkillValueWidget = button;
                 button->eventMouseButtonClick += MyGUI::newDelegate(this, &MWSkill::onClicked);
             }
         }
@@ -114,8 +114,8 @@ namespace MWGui
 
         MWAttribute::MWAttribute()
             : mId(-1)
-            , mAttributeNameWidget(NULL)
-            , mAttributeValueWidget(NULL)
+            , mAttributeNameWidget(nullptr)
+            , mAttributeValueWidget(nullptr)
         {
         }
 
@@ -204,7 +204,7 @@ namespace MWGui
         /* MWSpell */
 
         MWSpell::MWSpell()
-            : mSpellNameWidget(NULL)
+            : mSpellNameWidget(nullptr)
         {
         }
 
@@ -222,20 +222,20 @@ namespace MWGui
             const ESM::Spell *spell = store.get<ESM::Spell>().search(mId);
             MYGUI_ASSERT(spell, "spell with id '" << mId << "' not found");
 
-            std::vector<ESM::ENAMstruct>::const_iterator end = spell->mEffects.mList.end();
-            for (std::vector<ESM::ENAMstruct>::const_iterator it = spell->mEffects.mList.begin(); it != end; ++it)
+            for (const ESM::ENAMstruct& effectInfo : spell->mEffects.mList)
             {
                 MWSpellEffectPtr effect = creator->createWidget<MWSpellEffect>("MW_EffectImage", coord, MyGUI::Align::Default);
                 SpellEffectParams params;
-                params.mEffectID = it->mEffectID;
-                params.mSkill = it->mSkill;
-                params.mAttribute = it->mAttribute;
-                params.mDuration = it->mDuration;
-                params.mMagnMin = it->mMagnMin;
-                params.mMagnMax = it->mMagnMax;
-                params.mRange = it->mRange;
+                params.mEffectID = effectInfo.mEffectID;
+                params.mSkill = effectInfo.mSkill;
+                params.mAttribute = effectInfo.mAttribute;
+                params.mDuration = effectInfo.mDuration;
+                params.mMagnMin = effectInfo.mMagnMin;
+                params.mMagnMax = effectInfo.mMagnMax;
+                params.mRange = effectInfo.mRange;
                 params.mIsConstant = (flags & MWEffectList::EF_Constant) != 0;
                 params.mNoTarget = (flags & MWEffectList::EF_NoTarget);
+                params.mNoMagnitude = (flags & MWEffectList::EF_NoMagnitude);
                 effect->setSpellEffect(params);
                 effects.push_back(effect);
                 coord.top += effect->getHeight();
@@ -286,16 +286,16 @@ namespace MWGui
         {
             // We don't know the width of all the elements beforehand, so we do it in
             // 2 steps: first, create all widgets and check their width....
-            MWSpellEffectPtr effect = NULL;
+            MWSpellEffectPtr effect = nullptr;
             int maxwidth = coord.width;
 
-            for (SpellEffectList::iterator it=mEffectList.begin();
-                it != mEffectList.end(); ++it)
+            for (auto& effectInfo : mEffectList)
             {
                 effect = creator->createWidget<MWSpellEffect>("MW_EffectImage", coord, MyGUI::Align::Default);
-                it->mIsConstant = (flags & EF_Constant) || it->mIsConstant;
-                it->mNoTarget = (flags & EF_NoTarget) || it->mNoTarget;
-                effect->setSpellEffect(*it);
+                effectInfo.mIsConstant = (flags & EF_Constant) || effectInfo.mIsConstant;
+                effectInfo.mNoTarget = (flags & EF_NoTarget) || effectInfo.mNoTarget;
+                effectInfo.mNoMagnitude = (flags & EF_NoMagnitude) || effectInfo.mNoMagnitude;
+                effect->setSpellEffect(effectInfo);
                 effects.push_back(effect);
                 if (effect->getRequestedWidth() > maxwidth)
                     maxwidth = effect->getRequestedWidth();
@@ -304,9 +304,9 @@ namespace MWGui
             }
 
             // ... then adjust the size for all widgets
-            for (std::vector<MyGUI::Widget*>::iterator it = effects.begin(); it != effects.end(); ++it)
+            for (MyGUI::Widget* effectWidget : effects)
             {
-                effect = (*it)->castType<MWSpellEffect>();
+                effect = effectWidget->castType<MWSpellEffect>();
                 bool needcenter = center && (maxwidth > effect->getRequestedWidth());
                 int diff = maxwidth - effect->getRequestedWidth();
                 if (needcenter)
@@ -339,18 +339,17 @@ namespace MWGui
         SpellEffectList MWEffectList::effectListFromESM(const ESM::EffectList* effects)
         {
             SpellEffectList result;
-            std::vector<ESM::ENAMstruct>::const_iterator end = effects->mList.end();
-            for (std::vector<ESM::ENAMstruct>::const_iterator it = effects->mList.begin(); it != end; ++it)
+            for (const ESM::ENAMstruct& effectInfo : effects->mList)
             {
                 SpellEffectParams params;
-                params.mEffectID = it->mEffectID;
-                params.mSkill = it->mSkill;
-                params.mAttribute = it->mAttribute;
-                params.mDuration = it->mDuration;
-                params.mMagnMin = it->mMagnMin;
-                params.mMagnMax = it->mMagnMax;
-                params.mRange = it->mRange;
-                params.mArea = it->mArea;
+                params.mEffectID = effectInfo.mEffectID;
+                params.mSkill = effectInfo.mSkill;
+                params.mAttribute = effectInfo.mAttribute;
+                params.mDuration = effectInfo.mDuration;
+                params.mMagnMin = effectInfo.mMagnMin;
+                params.mMagnMax = effectInfo.mMagnMax;
+                params.mRange = effectInfo.mRange;
+                params.mArea = effectInfo.mArea;
                 result.push_back(params);
             }
             return result;
@@ -359,8 +358,8 @@ namespace MWGui
         /* MWSpellEffect */
 
         MWSpellEffect::MWSpellEffect()
-            : mImageWidget(NULL)
-            , mTextWidget(NULL)
+            : mImageWidget(nullptr)
+            , mTextWidget(nullptr)
             , mRequestedWidth(0)
         {
         }
@@ -376,7 +375,8 @@ namespace MWGui
             if (!mEffectParams.mKnown)
             {
                 mTextWidget->setCaption ("?");
-                mRequestedWidth = mTextWidget->getTextSize().width + 24;
+                mTextWidget->setCoord(sIconOffset / 2, mTextWidget->getCoord().top, mTextWidget->getCoord().width, mTextWidget->getCoord().height); // Compensates for the missing image when effect is not known
+                mRequestedWidth = mTextWidget->getTextSize().width + sIconOffset;
                 mImageWidget->setImageTexture ("");
                 return;
             }
@@ -411,7 +411,7 @@ namespace MWGui
                 spellLine += " " + MWBase::Environment::get().getWindowManager()->getGameSettingString(ESM::Attribute::sGmstAttributeIds[mEffectParams.mAttribute], "");
             }
 
-            if (mEffectParams.mMagnMin >= 0 || mEffectParams.mMagnMax >= 0) {
+            if (mEffectParams.mMagnMin || mEffectParams.mMagnMax) {
                 ESM::MagicEffect::MagnitudeDisplayType displayType = magicEffect->getMagnitudeDisplayType();
                 if ( displayType == ESM::MagicEffect::MDT_TimesInt ) {
                     std::string timesInt =  MWBase::Environment::get().getWindowManager()->getGameSettingString("sXTimesINT", "");
@@ -424,7 +424,7 @@ namespace MWGui
 
                     spellLine += formatter.str();
                 }
-                else if ( displayType != ESM::MagicEffect::MDT_None ) {
+                else if ( displayType != ESM::MagicEffect::MDT_None  && !mEffectParams.mNoMagnitude) {
                     spellLine += " " + MyGUI::utility::toString(mEffectParams.mMagnMin);
                     if (mEffectParams.mMagnMin != mEffectParams.mMagnMax)
                         spellLine += to + MyGUI::utility::toString(mEffectParams.mMagnMax);
@@ -434,15 +434,18 @@ namespace MWGui
                     else if ( displayType == ESM::MagicEffect::MDT_Feet )
                         spellLine += " " + ft;
                     else if ( displayType == ESM::MagicEffect::MDT_Level )
-                        spellLine += " " + ((mEffectParams.mMagnMin == 1 && mEffectParams.mMagnMax == 1) ? lvl : lvls );
+                        spellLine += " " + ((mEffectParams.mMagnMin == mEffectParams.mMagnMax && std::abs(mEffectParams.mMagnMin) == 1) ? lvl : lvls );
                     else  // ESM::MagicEffect::MDT_Points
-                        spellLine += " " + ((mEffectParams.mMagnMin == 1 && mEffectParams.mMagnMax == 1) ? pt : pts );
+                        spellLine += " " + ((mEffectParams.mMagnMin == mEffectParams.mMagnMax && std::abs(mEffectParams.mMagnMin) == 1) ? pt : pts );
                 }
             }
 
             // constant effects have no duration and no target
             if (!mEffectParams.mIsConstant)
             {
+                if (!(magicEffect->mData.mFlags & ESM::MagicEffect::AppliedOnce))
+                    mEffectParams.mDuration = std::max(1, mEffectParams.mDuration);
+
                 if (mEffectParams.mDuration > 0 && !(magicEffect->mData.mFlags & ESM::MagicEffect::NoDuration))
                 {
                     spellLine += " " + MWBase::Environment::get().getWindowManager()->getGameSettingString("sfor", "") + " " + MyGUI::utility::toString(mEffectParams.mDuration) + ((mEffectParams.mDuration == 1) ? sec : secs);
@@ -467,7 +470,7 @@ namespace MWGui
             }
 
             mTextWidget->setCaptionWithReplacing(spellLine);
-            mRequestedWidth = mTextWidget->getTextSize().width + 24;
+            mRequestedWidth = mTextWidget->getTextSize().width + sIconOffset;
 
             mImageWidget->setImageTexture(MWBase::Environment::get().getWindowManager()->correctIconPath(magicEffect->mIcon));
         }
@@ -489,9 +492,9 @@ namespace MWGui
         MWDynamicStat::MWDynamicStat()
         : mValue(0)
         , mMax(1)
-        , mTextWidget(NULL)
-        , mBarWidget(NULL)
-        , mBarTextWidget(NULL)
+        , mTextWidget(nullptr)
+        , mBarWidget(nullptr)
+        , mBarTextWidget(nullptr)
         {
         }
 
@@ -502,10 +505,9 @@ namespace MWGui
 
             if (mBarWidget)
             {
-                mBarWidget->setProgressRange(mMax);
-                mBarWidget->setProgressPosition(mValue);
+                mBarWidget->setProgressRange(std::max(0, mMax));
+                mBarWidget->setProgressPosition(std::max(0, mValue));
             }
-
 
             if (mBarTextWidget)
             {
@@ -531,102 +533,6 @@ namespace MWGui
             assignWidget(mTextWidget, "Text");
             assignWidget(mBarWidget, "Bar");
             assignWidget(mBarTextWidget, "BarText");
-        }
-
-        MWScrollBar::MWScrollBar()
-            : mEnableRepeat(true)
-            , mRepeatTriggerTime(0.5f)
-            , mRepeatStepTime(0.1f)
-            , mIsIncreasing(true)
-        {
-#if MYGUI_VERSION >= MYGUI_DEFINE_VERSION(3,2,2)
-            ScrollBar::setRepeatEnabled(false);
-#endif
-        }
-
-        MWScrollBar::~MWScrollBar()
-        {
-        }
-
-        void MWScrollBar::initialiseOverride()
-        {
-            ScrollBar::initialiseOverride();
-
-            if(mWidgetStart)
-            {
-                mWidgetStart->eventMouseButtonPressed += MyGUI::newDelegate(this, &MWScrollBar::onDecreaseButtonPressed);
-                mWidgetStart->eventMouseButtonReleased += MyGUI::newDelegate(this, &MWScrollBar::onDecreaseButtonReleased);
-            }
-            if(mWidgetEnd)
-            {
-                mWidgetEnd->eventMouseButtonPressed += MyGUI::newDelegate(this, &MWScrollBar::onIncreaseButtonPressed);
-                mWidgetEnd->eventMouseButtonReleased += MyGUI::newDelegate(this, &MWScrollBar::onIncreaseButtonReleased);
-            }
-        }
-
-        void MWScrollBar::setRepeat(float trigger, float step)
-        {
-            mRepeatTriggerTime = trigger;
-            mRepeatStepTime = step;
-        }
-
-        void MWScrollBar::repeatClick(MyGUI::Widget* _widget, MyGUI::ControllerItem* _controller)
-        {
-            int stepSize = mScrollPage;
-
-            if(mIsIncreasing && mScrollPosition < mScrollRange-1)
-            {
-                if(mScrollPosition + stepSize > mScrollRange-1)
-                    mScrollPosition = mScrollRange-1;
-                else
-                    mScrollPosition += stepSize;
-
-                eventScrollChangePosition(this, mScrollPosition);
-                updateTrack();
-            }
-            else if(!mIsIncreasing && mScrollPosition > 0)
-            {
-                int newPos = mScrollPosition - stepSize;
-                if(newPos < 0)
-                    mScrollPosition = 0;
-                else
-                    mScrollPosition -= stepSize;
-
-                eventScrollChangePosition(this, mScrollPosition);
-                updateTrack();
-            }
-        }
-
-        void MWScrollBar::onDecreaseButtonPressed(MyGUI::Widget* _sender, int _left, int _top, MyGUI::MouseButton _id)
-        {
-            mIsIncreasing = false;
-            MyGUI::ControllerItem* item = MyGUI::ControllerManager::getInstance().createItem(MWGui::Controllers::ControllerRepeatEvent::getClassTypeName());
-            MWGui::Controllers::ControllerRepeatEvent* controller = item->castType<MWGui::Controllers::ControllerRepeatEvent>();
-            controller->eventRepeatClick += newDelegate(this, &MWScrollBar::repeatClick);
-            controller->setEnabled(mEnableRepeat);
-            controller->setRepeat(mRepeatTriggerTime, mRepeatStepTime);
-            MyGUI::ControllerManager::getInstance().addItem(this, controller);
-        }
-
-        void MWScrollBar::onDecreaseButtonReleased(MyGUI::Widget* _sender, int _left, int _top, MyGUI::MouseButton _id)
-        {
-            MyGUI::ControllerManager::getInstance().removeItem(this);
-        }
-
-        void MWScrollBar::onIncreaseButtonPressed(MyGUI::Widget* _sender, int _left, int _top, MyGUI::MouseButton _id)
-        {
-            mIsIncreasing = true;
-            MyGUI::ControllerItem* item = MyGUI::ControllerManager::getInstance().createItem(MWGui::Controllers::ControllerRepeatEvent::getClassTypeName());
-            MWGui::Controllers::ControllerRepeatEvent* controller = item->castType<MWGui::Controllers::ControllerRepeatEvent>();
-            controller->eventRepeatClick += newDelegate(this, &MWScrollBar::repeatClick);
-            controller->setEnabled(mEnableRepeat);
-            controller->setRepeat(mRepeatTriggerTime, mRepeatStepTime);
-            MyGUI::ControllerManager::getInstance().addItem(this, controller);
-        }
-
-        void MWScrollBar::onIncreaseButtonReleased(MyGUI::Widget* _sender, int _left, int _top, MyGUI::MouseButton _id)
-        {
-            MyGUI::ControllerManager::getInstance().removeItem(this);
         }
     }
 }

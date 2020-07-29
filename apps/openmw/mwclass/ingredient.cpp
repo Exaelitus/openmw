@@ -7,14 +7,11 @@
 #include "../mwbase/windowmanager.hpp"
 
 #include "../mwworld/ptr.hpp"
-#include "../mwworld/actiontake.hpp"
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwphysics/physicssystem.hpp"
 #include "../mwworld/actioneat.hpp"
 #include "../mwworld/nullaction.hpp"
-
-#include "../mwmechanics/npcstats.hpp"
 
 #include "../mwgui/tooltips.hpp"
 
@@ -50,11 +47,12 @@ namespace MWClass
     std::string Ingredient::getName (const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::Ingredient> *ref = ptr.get<ESM::Ingredient>();
+        const std::string& name = ref->mBase->mName;
 
-        return ref->mBase->mName;
+        return !name.empty() ? name : ref->mBase->mId;
     }
 
-    boost::shared_ptr<MWWorld::Action> Ingredient::activate (const MWWorld::Ptr& ptr,
+    std::shared_ptr<MWWorld::Action> Ingredient::activate (const MWWorld::Ptr& ptr,
         const MWWorld::Ptr& actor) const
     {
         return defaultItemActivate(ptr, actor);
@@ -75,9 +73,9 @@ namespace MWClass
     }
 
 
-    boost::shared_ptr<MWWorld::Action> Ingredient::use (const MWWorld::Ptr& ptr) const
+    std::shared_ptr<MWWorld::Action> Ingredient::use (const MWWorld::Ptr& ptr, bool force) const
     {
-        boost::shared_ptr<MWWorld::Action> action (new MWWorld::ActionEat (ptr));
+        std::shared_ptr<MWWorld::Action> action (new MWWorld::ActionEat (ptr));
 
         action->setSound ("Swallow");
 
@@ -86,7 +84,7 @@ namespace MWClass
 
     void Ingredient::registerSelf()
     {
-        boost::shared_ptr<Class> instance (new Ingredient);
+        std::shared_ptr<Class> instance (new Ingredient);
 
         registerClass (typeid (ESM::Ingredient).name(), instance);
     }
@@ -108,24 +106,17 @@ namespace MWClass
         return ref->mBase->mIcon;
     }
 
-    bool Ingredient::hasToolTip (const MWWorld::ConstPtr& ptr) const
-    {
-        const MWWorld::LiveCellRef<ESM::Ingredient> *ref = ptr.get<ESM::Ingredient>();
-
-        return (ref->mBase->mName != "");
-    }
-
     MWGui::ToolTipInfo Ingredient::getToolTipInfo (const MWWorld::ConstPtr& ptr, int count) const
     {
         const MWWorld::LiveCellRef<ESM::Ingredient> *ref = ptr.get<ESM::Ingredient>();
 
         MWGui::ToolTipInfo info;
-        info.caption = ref->mBase->mName + MWGui::ToolTips::getCountString(count);
+        info.caption = MyGUI::TextIterator::toTagsString(getName(ptr)) + MWGui::ToolTips::getCountString(count);
         info.icon = ref->mBase->mIcon;
 
         std::string text;
 
-        text += "\n#{sWeight}: " + MWGui::ToolTips::toString(ref->mBase->mData.mWeight);
+        text += MWGui::ToolTips::getWeightString(ref->mBase->mData.mWeight, "#{sWeight}");
         text += MWGui::ToolTips::getValueString(ref->mBase->mData.mValue, "#{sValue}");
 
         if (MWBase::Environment::get().getWindowManager()->getFullHelp()) {
@@ -134,11 +125,10 @@ namespace MWClass
         }
 
         MWWorld::Ptr player = MWBase::Environment::get().getWorld ()->getPlayerPtr();
-        MWMechanics::NpcStats& npcStats = player.getClass().getNpcStats (player);
-        int alchemySkill = npcStats.getSkill (ESM::Skill::Alchemy).getBase();
+        float alchemySkill = player.getClass().getSkill(player, ESM::Skill::Alchemy);
 
         static const float fWortChanceValue =
-                MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find("fWortChanceValue")->getFloat();
+                MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find("fWortChanceValue")->mValue.getFloat();
 
         MWGui::Widgets::SpellEffectList list;
         for (int i=0; i<4; ++i)
@@ -160,6 +150,7 @@ namespace MWClass
         info.effects = list;
 
         info.text = text;
+        info.isIngredient = true;
 
         return info;
     }

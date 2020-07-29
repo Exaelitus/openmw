@@ -11,11 +11,7 @@ extern "C"
     #include <libavutil/avutil.h>
     #include <libavcodec/avcodec.h>
     #include <libavformat/avformat.h>
-
-    #if AV_VERSION_INT(52, 2, 0) <= AV_VERSION_INT(LIBAVUTIL_VERSION_MAJOR, \
-        LIBAVUTIL_VERSION_MINOR, LIBAVUTIL_VERSION_MICRO)
-        #include <libavutil/channel_layout.h>
-    #endif
+    #include <libavutil/channel_layout.h>
 }
 
 #if defined(_WIN32) && !defined(__MINGW32__)
@@ -35,6 +31,7 @@ class MovieAudioDecoder
 {
 protected:
     VideoState *mVideoState;
+    AVCodecContext* mAudioContext;
     AVStream *mAVStream;
     enum AVSampleFormat mOutputSampleFormat;
     uint64_t mOutputChannelLayout;
@@ -51,11 +48,11 @@ private:
                 throw std::bad_alloc();
         }
         ~AutoAVPacket()
-        { av_free_packet(this); }
+        { av_packet_unref(this); }
     };
 
 
-    std::auto_ptr<AudioResampler> mAudioResampler;
+    std::unique_ptr<AudioResampler> mAudioResampler;
 
     uint8_t *mDataBuf;
     uint8_t **mFrameData;
@@ -63,6 +60,7 @@ private:
 
     AutoAVPacket mPacket;
     AVFrame *mFrame;
+    bool mGetNextPacket;
 
     /* averaging filter for audio sync */
     double mAudioDiffAccum;

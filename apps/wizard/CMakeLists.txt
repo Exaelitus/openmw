@@ -1,13 +1,3 @@
-if (WIN32) # windows users can just run the morrowind installer
-    set(OPENMW_USE_UNSHIELD FALSE)
-else()
-    set(OPENMW_USE_UNSHIELD TRUE)
-
-    find_package(LIBUNSHIELD REQUIRED)
-    if(NOT LIBUNSHIELD_FOUND)
-        message(FATAL_ERROR "Failed to find Unshield library")
-    endif(NOT LIBUNSHIELD_FOUND)
-endif()
 
 set(WIZARD
     componentselectionpage.cpp
@@ -89,24 +79,17 @@ if(WIN32)
     set(QT_USE_QTMAIN TRUE)
 endif(WIN32)
 
-if (DESIRED_QT_VERSION MATCHES 4)
-    include(${QT_USE_FILE})
-    QT4_ADD_RESOURCES(RCC_SRCS ${CMAKE_SOURCE_DIR}/files/wizard/wizard.qrc)
-    QT4_WRAP_CPP(MOC_SRCS ${WIZARD_HEADER_MOC})
-    QT4_WRAP_UI(UI_HDRS ${WIZARD_UI})
-else()
-    QT5_ADD_RESOURCES(RCC_SRCS ${CMAKE_SOURCE_DIR}/files/wizard/wizard.qrc)
-    QT5_WRAP_CPP(MOC_SRCS ${WIZARD_HEADER_MOC})
-    QT5_WRAP_UI(UI_HDRS ${WIZARD_UI})
-endif()
+QT5_ADD_RESOURCES(RCC_SRCS ${CMAKE_SOURCE_DIR}/files/wizard/wizard.qrc)
+QT5_WRAP_CPP(MOC_SRCS ${WIZARD_HEADER_MOC})
+QT5_WRAP_UI(UI_HDRS ${WIZARD_UI})
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 if (OPENMW_USE_UNSHIELD)
-    include_directories(${LIBUNSHIELD_INCLUDE_DIR})
+    include_directories(${LIBUNSHIELD_INCLUDE_DIRS})
 endif()
 
-add_executable(openmw-wizard
+openmw_add_executable(openmw-wizard
     ${GUI_TYPE}
     ${WIZARD}
     ${WIZARD_HEADER}
@@ -119,22 +102,11 @@ target_link_libraries(openmw-wizard
     components
 )
 
-if (DESIRED_QT_VERSION MATCHES 4)
-    target_link_libraries(openmw-wizard
-    ${QT_QTGUI_LIBRARY}
-    ${QT_QTCORE_LIBRARY})
-
-    if (WIN32)
-        target_link_libraries(openmw-wizard ${QT_QTMAIN_LIBRARY})
-    endif()
-else()
-    qt5_use_modules(openmw-wizard Widgets Core)
-endif()
+target_link_libraries(openmw-wizard Qt5::Widgets Qt5::Core)
 
 if (OPENMW_USE_UNSHIELD)
-    target_link_libraries(openmw-wizard ${LIBUNSHIELD_LIBRARY})
+    target_link_libraries(openmw-wizard ${LIBUNSHIELD_LIBRARIES})
 endif()
-
 
 if(DPKG_PROGRAM)
     INSTALL(TARGETS openmw-wizard RUNTIME DESTINATION games COMPONENT openmw-wizard)
@@ -146,7 +118,10 @@ if (BUILD_WITH_CODE_COVERAGE)
 endif()
 
 # Workaround for binutil => 2.23 problem when linking, should be fixed eventually upstream
-if (UNIX AND NOT APPLE)
+if (CMAKE_SYSTEM_NAME MATCHES "Linux")
 target_link_libraries(openmw-wizard dl Xt)
 endif()
 
+if (WIN32)
+    INSTALL(TARGETS openmw-wizard RUNTIME DESTINATION ".")
+endif(WIN32)

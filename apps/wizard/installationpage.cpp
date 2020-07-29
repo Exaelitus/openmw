@@ -7,7 +7,6 @@
 #include <QMessageBox>
 
 #include "mainwizard.hpp"
-#include "inisettings.hpp"
 
 Wizard::InstallationPage::InstallationPage(QWidget *parent) :
     QWizardPage(parent)
@@ -76,7 +75,7 @@ void Wizard::InstallationPage::initializePage()
     // That way installing all three components would yield 300%
     // When one component is done the bar will be filled by 33%
 
-    if (field(QLatin1String("installation.new")).toBool() == true) {
+    if (field(QLatin1String("installation.retailDisc")).toBool() == true) {
         installProgressBar->setMaximum((components.count() * 100));
     } else {
         if (components.contains(QLatin1String("Tribunal"))
@@ -96,7 +95,7 @@ void Wizard::InstallationPage::startInstallation()
     QStringList components(field(QLatin1String("installation.components")).toStringList());
     QString path(field(QLatin1String("installation.path")).toString());
 
-    if (field(QLatin1String("installation.new")).toBool() == true)
+    if (field(QLatin1String("installation.retailDisc")).toBool() == true)
     {
         // Always install Morrowind
         mUnshield->setInstallComponent(Wizard::Component_Morrowind, true);
@@ -155,6 +154,14 @@ void Wizard::InstallationPage::showFileDialog(Wizard::Component component)
         name = QLatin1String("Bloodmoon");
         break;
     }
+    logTextEdit->appendHtml(tr("<p>Attempting to install component %1.</p>").arg(name));
+    mWizard->addLogText(tr("Attempting to install component %1.").arg(name));
+
+    QMessageBox msgBox;
+    msgBox.setWindowTitle(tr("%1 Installation").arg(name));
+    msgBox.setIcon(QMessageBox::Information);
+    msgBox.setText(QObject::tr("Select a valid %1 installation media.<br><b>Hint</b>: make sure that it contains at least one <b>.cab</b> file.").arg(name));
+    msgBox.exec();
 
     QString path = QFileDialog::getExistingDirectory(this,
                                                      tr("Select %1 installation media").arg(name),
@@ -162,7 +169,7 @@ void Wizard::InstallationPage::showFileDialog(Wizard::Component component)
 
     if (path.isEmpty()) {
         logTextEdit->appendHtml(tr("<p><br/><span style=\"color:red;\"> \
-                                    <b>Error: The installation was aborted by the user</b></p>"));
+                                    <b>Error: The installation was aborted by the user</b></span></p>"));
 
         mWizard->addLogText(QLatin1String("Error: The installation was aborted by the user"));
         mWizard->mError = true;
@@ -227,7 +234,7 @@ bool Wizard::InstallationPage::isComplete() const
 
 int Wizard::InstallationPage::nextId() const
 {
-    if (field(QLatin1String("installation.new")).toBool() == true) {
+    if (field(QLatin1String("installation.retailDisc")).toBool() == true) {
         return MainWizard::Page_Conclusion;
     } else {
         if (!mWizard->mError) {

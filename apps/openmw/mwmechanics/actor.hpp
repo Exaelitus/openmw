@@ -3,7 +3,7 @@
 
 #include <memory>
 
-#include "aistate.hpp"
+#include "../mwmechanics/actorutil.hpp"
 
 namespace MWRender
 {
@@ -29,12 +29,24 @@ namespace MWMechanics
 
         CharacterController* getCharacterController();
 
-        AiState& getAiState();
+        int getGreetingTimer() const;
+        void setGreetingTimer(int timer);
+
+        float getAngleToPlayer() const;
+        void setAngleToPlayer(float angle);
+
+        GreetingState getGreetingState() const;
+        void setGreetingState(GreetingState state);
+
+        bool isTurningToPlayer() const;
+        void setTurningToPlayer(bool turning);
 
     private:
-        std::auto_ptr<CharacterController> mCharacterController;
-
-        AiState mAiState;
+        std::unique_ptr<CharacterController> mCharacterController;
+        int mGreetingTimer{0};
+        float mTargetAngleRadians{0.f};
+        GreetingState mGreetingState{Greet_None};
+        bool mIsTurningToPlayer{false};
     };
 
 }

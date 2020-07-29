@@ -1,10 +1,17 @@
 #include "containeritemmodel.hpp"
 
+#include <algorithm>
+
+#include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/actorutil.hpp"
+
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/class.hpp"
 
-#include "../mwbase/world.hpp"
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
+#include "../mwbase/windowmanager.hpp"
+#include "../mwbase/world.hpp"
 
 namespace
 {
@@ -45,6 +52,19 @@ ContainerItemModel::ContainerItemModel (const MWWorld::Ptr& source)
     mItemSources.push_back(source);
 }
 
+bool ContainerItemModel::allowedToUseItems() const
+{
+    if (mItemSources.size() == 0)
+        return true;
+
+    MWWorld::Ptr ptr = MWMechanics::getPlayer();
+    MWWorld::Ptr victim;
+
+    // Check if the player is allowed to use items from opened container
+    MWBase::MechanicsManager* mm = MWBase::Environment::get().getMechanicsManager();
+    return mm->isAllowedToUse(ptr, mItemSources[0], victim);
+}
+
 ItemStack ContainerItemModel::getItem (ModelIndex index)
 {
     if (index < 0)
@@ -62,50 +82,50 @@ size_t ContainerItemModel::getItemCount()
 ItemModel::ModelIndex ContainerItemModel::getIndex (ItemStack item)
 {
     size_t i = 0;
-    for (std::vector<ItemStack>::iterator it = mItems.begin(); it != mItems.end(); ++it)
+    for (ItemStack& itemStack : mItems)
     {
-        if (*it == item)
+        if (itemStack == item)
             return i;
         ++i;
     }
     return -1;
 }
 
-MWWorld::Ptr ContainerItemModel::copyItem (const ItemStack& item, size_t count, bool setNewOwner)
+MWWorld::Ptr ContainerItemModel::copyItem (const ItemStack& item, size_t count, bool allowAutoEquip)
 {
     const MWWorld::Ptr& source = mItemSources[mItemSources.size()-1];
     if (item.mBase.getContainerStore() == &source.getClass().getContainerStore(source))
         throw std::runtime_error("Item to copy needs to be from a different container!");
-    return *source.getClass().getContainerStore(source).add(item.mBase, count, source);
+    return *source.getClass().getContainerStore(source).add(item.mBase, count, source, allowAutoEquip);
 }
 
 void ContainerItemModel::removeItem (const ItemStack& item, size_t count)
 {
     int toRemove = count;
 
-    for (std::vector<MWWorld::Ptr>::iterator source = mItemSources.begin(); source != mItemSources.end(); ++source)
+    for (MWWorld::Ptr& source : mItemSources)
     {
-        MWWorld::ContainerStore& store = source->getClass().getContainerStore(*source);
+        MWWorld::ContainerStore& store = source.getClass().getContainerStore(source);
 
         for (MWWorld::ContainerStoreIterator it = store.begin(); it != store.end(); ++it)
         {
             if (stacks(*it, item.mBase))
             {
-                toRemove -= store.remove(*it, toRemove, *source);
+                toRemove -= store.remove(*it, toRemove, source);
                 if (toRemove <= 0)
                     return;
             }
         }
     }
-    for (std::vector<MWWorld::Ptr>::iterator source = mWorldItems.begin(); source != mWorldItems.end(); ++source)
+    for (MWWorld::Ptr& source : mWorldItems)
     {
-        if (stacks(*source, item.mBase))
+        if (stacks(source, item.mBase))
         {
-            int refCount = source->getRefData().getCount();
+            int refCount = source.getRefData().getCount();
             if (refCount - toRemove <= 0)
-                MWBase::Environment::get().getWorld()->deleteObject(*source);
+                MWBase::Environment::get().getWorld()->deleteObject(source);
             else
-                source->getRefData().setCount(std::max(0, refCount - toRemove));
+                source.getRefData().setCount(std::max(0, refCount - toRemove));
             toRemove -= refCount;
             if (toRemove <= 0)
                 return;
@@ -118,24 +138,28 @@ void ContainerItemModel::removeItem (const ItemStack& item, size_t count)
 void ContainerItemModel::update()
 {
     mItems.clear();
-    for (std::vector<MWWorld::Ptr>::iterator source = mItemSources.begin(); source != mItemSources.end(); ++source)
+    for (MWWorld::Ptr& source : mItemSources)
     {
-        MWWorld::ContainerStore& store = source->getClass().getContainerStore(*source);
+        MWWorld::ContainerStore& store = source.getClass().getContainerStore(source);
 
         for (MWWorld::ContainerStoreIterator it = store.begin(); it != store.end(); ++it)
         {
-            std::vector<ItemStack>::iterator itemStack = mItems.begin();
-            for (; itemStack != mItems.end(); ++itemStack)
+            if (!(*it).getClass().showsInInventory(*it))
+                continue;
+
+            bool found = false;
+            for (ItemStack& itemStack : mItems)
             {
-                if (stacks(*it, itemStack->mBase))
+                if (stacks(*it, itemStack.mBase))
                 {
                     // we already have an item stack of this kind, add to it
-                    itemStack->mCount += it->getRefData().getCount();
+                    itemStack.mCount += it->getRefData().getCount();
+                    found = true;
                     break;
                 }
             }
 
-            if (itemStack == mItems.end())
+            if (!found)
             {
                 // no stack yet, create one
                 ItemStack newItem (*it, this, it->getRefData().getCount());
@@ -143,26 +167,73 @@ void ContainerItemModel::update()
             }
         }
     }
-    for (std::vector<MWWorld::Ptr>::iterator source = mWorldItems.begin(); source != mWorldItems.end(); ++source)
+    for (MWWorld::Ptr& source : mWorldItems)
     {
-        std::vector<ItemStack>::iterator itemStack = mItems.begin();
-        for (; itemStack != mItems.end(); ++itemStack)
+        bool found = false;
+        for (ItemStack& itemStack : mItems)
         {
-            if (stacks(*source, itemStack->mBase))
+            if (stacks(source, itemStack.mBase))
             {
                 // we already have an item stack of this kind, add to it
-                itemStack->mCount += source->getRefData().getCount();
+                itemStack.mCount += source.getRefData().getCount();
+                found = true;
                 break;
             }
         }
 
-        if (itemStack == mItems.end())
+        if (!found)
         {
             // no stack yet, create one
-            ItemStack newItem (*source, this, source->getRefData().getCount());
+            ItemStack newItem (source, this, source.getRefData().getCount());
             mItems.push_back(newItem);
         }
     }
+}
+bool ContainerItemModel::onDropItem(const MWWorld::Ptr &item, int count)
+{
+    if (mItemSources.empty())
+        return false;
+
+    MWWorld::Ptr target = mItemSources[0];
+
+    if (target.getTypeName() != typeid(ESM::Container).name())
+        return true;
+
+    // check container organic flag
+    MWWorld::LiveCellRef<ESM::Container>* ref = target.get<ESM::Container>();
+    if (ref->mBase->mFlags & ESM::Container::Organic)
+    {
+        MWBase::Environment::get().getWindowManager()->
+            messageBox("#{sContentsMessage2}");
+        return false;
+    }
+
+    // check that we don't exceed container capacity
+    float weight = item.getClass().getWeight(item) * count;
+    if (target.getClass().getCapacity(target) < target.getClass().getEncumbrance(target) + weight)
+    {
+        MWBase::Environment::get().getWindowManager()->messageBox("#{sContentsMessage3}");
+        return false;
+    }
+
+    return true;
+}
+
+bool ContainerItemModel::onTakeItem(const MWWorld::Ptr &item, int count)
+{
+    if (mItemSources.empty())
+        return false;
+
+    MWWorld::Ptr target = mItemSources[0];
+
+    // Looting a dead corpse is considered OK
+    if (target.getClass().isActor() && target.getClass().getCreatureStats(target).isDead())
+        return true;
+
+    MWWorld::Ptr player = MWMechanics::getPlayer();
+    MWBase::Environment::get().getMechanicsManager()->itemTaken(player, item, target, count);
+
+    return true;
 }
 
 }

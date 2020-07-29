@@ -16,7 +16,7 @@ namespace ESM
         while (esm.hasMoreSubs())
         {
             esm.getSubName();
-            switch (esm.retSubName().val)
+            switch (esm.retSubName().intval)
             {
                 case ESM::SREC_NAME:
                     mId = esm.getHString();
@@ -61,10 +61,14 @@ namespace ESM
                     esm.getHT(mMapColor);
                     break;
                 case ESM::FourCC<'S','N','A','M'>::value:
+                {
+                    esm.getSubHeader();
                     SoundRef sr;
-                    esm.getHT(sr, 33);
+                    sr.mSound.assign(esm.getString(32));
+                    esm.getT(sr.mChance);
                     mSoundList.push_back(sr);
                     break;
+                }
                 case ESM::SREC_DELE:
                     esm.skipHSub();
                     isDeleted = true;
@@ -101,14 +105,15 @@ namespace ESM
         esm.writeHNT("CNAM", mMapColor);
         for (std::vector<SoundRef>::const_iterator it = mSoundList.begin(); it != mSoundList.end(); ++it)
         {
-            esm.writeHNT<SoundRef>("SNAM", *it);
+            esm.startSubRecord("SNAM");
+            esm.writeFixedSizeString(it->mSound, 32);
+            esm.writeT(it->mChance);
+            esm.endRecord("NPCO");
         }
     }
 
     void Region::blank()
     {
-        mName.clear();
-
         mData.mClear = mData.mCloudy = mData.mFoggy = mData.mOvercast = mData.mRain =
             mData.mThunder = mData.mAsh, mData.mBlight = mData.mA = mData.mB = 0;
 

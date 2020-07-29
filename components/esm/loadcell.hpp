@@ -43,7 +43,15 @@ bool operator==(const MovedCellRef& ref, const RefNum& refNum);
 bool operator==(const CellRef& ref, const RefNum& refNum);
 
 typedef std::list<MovedCellRef> MovedCellRefTracker;
-typedef std::list<CellRef> CellRefTracker;
+typedef std::list<std::pair<CellRef, bool> > CellRefTracker;
+
+struct CellRefTrackerPredicate
+{
+    RefNum mRefNum;
+
+    CellRefTrackerPredicate(const RefNum& refNum) : mRefNum(refNum) {}
+    bool operator() (const std::pair<CellRef, bool>& refdelPair) { return refdelPair.first == mRefNum; }
+};
 
 /* Cells hold data about objects, creatures, statics (rocks, walls,
    buildings) and landscape (for exterior cells). Cells frequently
@@ -70,18 +78,19 @@ struct Cell
 
   struct DATAstruct
   {
-    int mFlags;
-    int mX, mY;
+      int mFlags {0};
+      int mX {0}, mY {0};
   };
 
   struct AMBIstruct
   {
-    Color mAmbient, mSunlight, mFog;
-    float mFogDensity;
+      Color mAmbient {0}, mSunlight {0}, mFog {0};
+      float mFogDensity {0.f};
   };
 
   Cell() : mName(""),
            mRegion(""),
+           mHasAmbi(true),
            mWater(0),
            mWaterInt(false),
            mMapColor(0),
@@ -100,6 +109,7 @@ struct Cell
   CellId mCellId;
 
   AMBIstruct mAmbi;
+  bool mHasAmbi;
 
   float mWater; // Water level
   bool mWaterInt;
@@ -142,6 +152,16 @@ struct Cell
   bool hasWater() const
   {
       return ((mData.mFlags&HasWater) != 0) || isExterior();
+  }
+
+  bool hasAmbient() const
+  {
+      return mHasAmbi;
+  }
+
+  void setHasAmbient(bool hasAmbi)
+  {
+      mHasAmbi = hasAmbi;
   }
 
   // Restore the given reader to the stored position. Will try to open

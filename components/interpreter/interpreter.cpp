@@ -1,7 +1,6 @@
 #include "interpreter.hpp"
 
 #include <cassert>
-#include <sstream>
 #include <stdexcept>
 
 #include "opcodes.hpp"
@@ -25,22 +24,6 @@ namespace Interpreter
                     abortUnknownCode (0, opcode);
 
                 iter->second->execute (mRuntime, arg0);
-
-                return;
-            }
-
-            case 1:
-            {
-                int opcode = (code>>24) & 0x3f;
-                unsigned int arg0 = (code>>16) & 0xfff;
-                unsigned int arg1 = code & 0xfff;
-
-                std::map<int, Opcode2 *>::iterator iter = mSegment1.find (opcode);
-
-                if (iter==mSegment1.end())
-                    abortUnknownCode (1, opcode);
-
-                iter->second->execute (mRuntime, arg0, arg1);
 
                 return;
             }
@@ -80,22 +63,6 @@ namespace Interpreter
                 return;
             }
 
-            case 0x31:
-            {
-                int opcode = (code>>16) & 0x3ff;
-                unsigned int arg0 = (code>>8) & 0xff;
-                unsigned int arg1 = code & 0xff;
-
-                std::map<int, Opcode2 *>::iterator iter = mSegment4.find (opcode);
-
-                if (iter==mSegment4.end())
-                    abortUnknownCode (4, opcode);
-
-                iter->second->execute (mRuntime, arg0, arg1);
-
-                return;
-            }
-
             case 0x32:
             {
                 int opcode = code & 0x3ffffff;
@@ -116,20 +83,14 @@ namespace Interpreter
 
     void Interpreter::abortUnknownCode (int segment, int opcode)
     {
-        std::ostringstream error;
-
-        error << "unknown opcode " << opcode << " in segment " << segment;
-
-        throw std::runtime_error (error.str());
+        const std::string error = "unknown opcode " + std::to_string(opcode) + " in segment " + std::to_string(segment);
+        throw std::runtime_error (error);
     }
 
     void Interpreter::abortUnknownSegment (Type_Code code)
     {
-        std::ostringstream error;
-
-        error << "opcode outside of the allocated segment range: " << code;
-
-        throw std::runtime_error (error.str());
+        const std::string error = "opcode outside of the allocated segment range: " + std::to_string(code);
+        throw std::runtime_error (error);
     }
 
     void Interpreter::begin()
@@ -168,20 +129,12 @@ namespace Interpreter
             iter!=mSegment0.end(); ++iter)
             delete iter->second;
 
-        for (std::map<int, Opcode2 *>::iterator iter (mSegment1.begin());
-            iter!=mSegment1.end(); ++iter)
-            delete iter->second;
-
         for (std::map<int, Opcode1 *>::iterator iter (mSegment2.begin());
             iter!=mSegment2.end(); ++iter)
             delete iter->second;
 
         for (std::map<int, Opcode1 *>::iterator iter (mSegment3.begin());
             iter!=mSegment3.end(); ++iter)
-            delete iter->second;
-
-        for (std::map<int, Opcode2 *>::iterator iter (mSegment4.begin());
-            iter!=mSegment4.end(); ++iter)
             delete iter->second;
 
         for (std::map<int, Opcode0 *>::iterator iter (mSegment5.begin());
@@ -195,12 +148,6 @@ namespace Interpreter
         mSegment0.insert (std::make_pair (code, opcode));
     }
 
-    void Interpreter::installSegment1 (int code, Opcode2 *opcode)
-    {
-        assert(mSegment1.find(code) == mSegment1.end());
-        mSegment1.insert (std::make_pair (code, opcode));
-    }
-
     void Interpreter::installSegment2 (int code, Opcode1 *opcode)
     {
         assert(mSegment2.find(code) == mSegment2.end());
@@ -211,12 +158,6 @@ namespace Interpreter
     {
         assert(mSegment3.find(code) == mSegment3.end());
         mSegment3.insert (std::make_pair (code, opcode));
-    }
-
-    void Interpreter::installSegment4 (int code, Opcode2 *opcode)
-    {
-        assert(mSegment4.find(code) == mSegment4.end());
-        mSegment4.insert (std::make_pair (code, opcode));
     }
 
     void Interpreter::installSegment5 (int code, Opcode0 *opcode)
@@ -241,9 +182,9 @@ namespace Interpreter
 
             while (mRuntime.getPC()>=0 && mRuntime.getPC()<opcodes)
             {
-                Type_Code code = codeBlock[mRuntime.getPC()];
+                Type_Code runCode = codeBlock[mRuntime.getPC()];
                 mRuntime.setPC (mRuntime.getPC()+1);
-                execute (code);
+                execute (runCode);
             }
         }
         catch (...)

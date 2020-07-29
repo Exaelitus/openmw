@@ -35,6 +35,8 @@ CSVWorld::ReferenceCreator::ReferenceCreator (CSMWorld::Data& data, QUndoStack& 
     QLabel *label = new QLabel ("Cell", this);
     insertBeforeButtons (label, false);
 
+    // Add cell ID input with auto-completion.
+    // Only existing cell IDs are accepted so no ID validation is performed.
     mCell = new CSVWidget::DropLineEdit(CSMWorld::ColumnBase::Display_Cell, this);
     mCell->setCompleter(completionManager.getCompleter(CSMWorld::ColumnBase::Display_Cell).get());
     insertBeforeButtons (mCell, true);
@@ -61,19 +63,9 @@ std::string CSVWorld::ReferenceCreator::getErrors() const
     std::string cell = mCell->text().toUtf8().constData();
 
     if (cell.empty())
-    {
-        if (!errors.empty())
-            errors += "<br>";
-
         errors += "Missing Cell ID";
-    }
     else if (getData().getCells().searchId (cell)==-1)
-    {
-        if (!errors.empty())
-            errors += "<br>";
-
         errors += "Invalid Cell ID";
-    }
 
     return errors;
 }

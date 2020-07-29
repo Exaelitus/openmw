@@ -5,6 +5,7 @@
 #include <MyGUI_RenderManager.h>
 #include <MyGUI_Button.h>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/stringops.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -19,32 +20,40 @@ namespace MWGui
 
     MessageBoxManager::MessageBoxManager (float timePerChar)
     {
-        mInterMessageBoxe = NULL;
-        mStaticMessageBox = NULL;
+        mInterMessageBoxe = nullptr;
+        mStaticMessageBox = nullptr;
         mLastButtonPressed = -1;
         mMessageBoxSpeed = timePerChar;
     }
 
     MessageBoxManager::~MessageBoxManager ()
     {
-        std::vector<MessageBox*>::iterator it(mMessageBoxes.begin());
-        for (; it != mMessageBoxes.end(); ++it)
+        for (MessageBox* messageBox : mMessageBoxes)
         {
-            delete *it;
+            delete messageBox;
         }
+    }
+
+    int MessageBoxManager::getMessagesCount()
+    {
+        return mMessageBoxes.size();
     }
 
     void MessageBoxManager::clear()
     {
-        delete mInterMessageBoxe;
-        mInterMessageBoxe = NULL;
-
-        std::vector<MessageBox*>::iterator it(mMessageBoxes.begin());
-        for (; it != mMessageBoxes.end(); ++it)
+        if (mInterMessageBoxe)
         {
-            if (*it == mStaticMessageBox)
-                mStaticMessageBox = NULL;
-            delete *it;
+            mInterMessageBoxe->setVisible(false);
+
+            delete mInterMessageBoxe;
+            mInterMessageBoxe = nullptr;
+        }
+
+        for (MessageBox* messageBox : mMessageBoxes)
+        {
+            if (messageBox == mStaticMessageBox)
+                mStaticMessageBox = nullptr;
+            delete messageBox;
         }
         mMessageBoxes.clear();
 
@@ -70,15 +79,16 @@ namespace MWGui
         it = mMessageBoxes.begin();
         while(it != mMessageBoxes.end())
         {
-                (*it)->update(static_cast<int>(height));
-                height += (*it)->getHeight();
-                ++it;
+            (*it)->update(static_cast<int>(height));
+            height += (*it)->getHeight();
+            ++it;
         }
 
-        if(mInterMessageBoxe != NULL && mInterMessageBoxe->mMarkedToDelete) {
+        if(mInterMessageBoxe != nullptr && mInterMessageBoxe->mMarkedToDelete) {
             mLastButtonPressed = mInterMessageBoxe->readPressedButton();
+            mInterMessageBoxe->setVisible(false);
             delete mInterMessageBoxe;
-            mInterMessageBoxe = NULL;
+            mInterMessageBoxe = nullptr;
             MWBase::Environment::get().getInputManager()->changeInputMode(
                         MWBase::Environment::get().getWindowManager()->isGuiMode());
         }
@@ -102,26 +112,27 @@ namespace MWGui
         }
 
         int height = 0;
-        for(std::vector<MessageBox*>::iterator it = mMessageBoxes.begin(); it != mMessageBoxes.end(); ++it)
+        for (MessageBox* messageBox : mMessageBoxes)
         {
-            (*it)->update(height);
-            height += (*it)->getHeight();
+            messageBox->update(height);
+            height += messageBox->getHeight();
         }
     }
 
     void MessageBoxManager::removeStaticMessageBox ()
     {
         removeMessageBox(mStaticMessageBox);
-        mStaticMessageBox = NULL;
+        mStaticMessageBox = nullptr;
     }
 
     bool MessageBoxManager::createInteractiveMessageBox (const std::string& message, const std::vector<std::string>& buttons)
     {
-        if (mInterMessageBoxe != NULL)
+        if (mInterMessageBoxe != nullptr)
         {
-            std::cerr << "Warning: replacing an interactive message box that was not answered yet" << std::endl;
+            Log(Debug::Warning) << "Warning: replacing an interactive message box that was not answered yet";
+            mInterMessageBoxe->setVisible(false);
             delete mInterMessageBoxe;
-            mInterMessageBoxe = NULL;
+            mInterMessageBoxe = nullptr;
         }
 
         mInterMessageBoxe = new InteractiveMessageBox(*this, message, buttons);
@@ -132,7 +143,7 @@ namespace MWGui
 
     bool MessageBoxManager::isInteractiveMessageBox ()
     {
-        return mInterMessageBoxe != NULL;
+        return mInterMessageBoxe != nullptr;
     }
 
 
@@ -196,17 +207,16 @@ namespace MWGui
 
 
     InteractiveMessageBox::InteractiveMessageBox(MessageBoxManager& parMessageBoxManager, const std::string& message, const std::vector<std::string>& buttons)
-        : WindowModal("openmw_interactive_messagebox.layout")
+        : WindowModal(MWBase::Environment::get().getWindowManager()->isGuiMode() ? "openmw_interactive_messagebox_notransp.layout" : "openmw_interactive_messagebox.layout")
       , mMessageBoxManager(parMessageBoxManager)
       , mButtonPressed(-1)
     {
-        WindowModal::open();
-
         int textPadding = 10; // padding between text-widget and main-widget
         int textButtonPadding = 10; // padding between the text-widget und the button-widget
         int buttonLeftPadding = 10; // padding between the buttons if horizontal
         int buttonTopPadding = 10; // ^-- if vertical
-        int buttonPadding = 5; // padding between button label and button itself
+        int buttonLabelLeftPadding = 12; // padding between button label and button itself, from left
+        int buttonLabelTopPadding = 4; // padding between button label and button itself, from top
         int buttonMainPadding = 10; // padding between buttons and bottom of the main widget
 
         mMarkedToDelete = false;
@@ -228,15 +238,14 @@ namespace MWGui
         int buttonHeight = 0;
         MyGUI::IntCoord dummyCoord(0, 0, 0, 0);
 
-        std::vector<std::string>::const_iterator it;
-        for(it = buttons.begin(); it != buttons.end(); ++it)
+        for(const std::string& buttonId : buttons)
         {
             MyGUI::Button* button = mButtonsWidget->createWidget<MyGUI::Button>(
                 MyGUI::WidgetStyle::Child,
                 std::string("MW_Button"),
                 dummyCoord,
                 MyGUI::Align::Default);
-            button->setCaptionWithReplacing(*it);
+            button->setCaptionWithReplacing(buttonId);
 
             button->eventMouseButtonClick += MyGUI::newDelegate(this, &InteractiveMessageBox::mousePressed);
 
@@ -245,10 +254,10 @@ namespace MWGui
             if (buttonsWidth != 0)
                 buttonsWidth += buttonLeftPadding;
 
-            int buttonWidth = button->getTextSize().width + 2*buttonPadding;
+            int buttonWidth = button->getTextSize().width + 2*buttonLabelLeftPadding;
             buttonsWidth += buttonWidth;
 
-            buttonHeight = button->getTextSize().height + 2*buttonPadding;
+            buttonHeight = button->getTextSize().height + 2*buttonLabelTopPadding;
 
             if (buttonsHeight != 0)
                 buttonsHeight += buttonTopPadding;
@@ -289,17 +298,16 @@ namespace MWGui
             MyGUI::IntSize buttonSize(0, buttonHeight);
             int left = (mainWidgetSize.width - buttonsWidth)/2;
 
-            std::vector<MyGUI::Button*>::const_iterator button;
-            for(button = mButtons.begin(); button != mButtons.end(); ++button)
+            for(MyGUI::Button* button : mButtons)
             {
                 buttonCord.left = left;
                 buttonCord.top = messageWidgetCoord.top + textSize.height + textButtonPadding;
 
-                buttonSize.width = (*button)->getTextSize().width + 2*buttonPadding;
-                buttonSize.height = (*button)->getTextSize().height + 2*buttonPadding;
+                buttonSize.width = button->getTextSize().width + 2*buttonLabelLeftPadding;
+                buttonSize.height = button->getTextSize().height + 2*buttonLabelTopPadding;
 
-                (*button)->setCoord(buttonCord);
-                (*button)->setSize(buttonSize);
+                button->setCoord(buttonCord);
+                button->setSize(buttonSize);
 
                 left += buttonSize.width + buttonLeftPadding;
             }
@@ -319,17 +327,16 @@ namespace MWGui
 
             int top = textPadding + textSize.height + textButtonPadding;
 
-            std::vector<MyGUI::Button*>::const_iterator button;
-            for(button = mButtons.begin(); button != mButtons.end(); ++button)
+            for(MyGUI::Button* button : mButtons)
             {
-                buttonSize.width = (*button)->getTextSize().width + buttonPadding*2;
-                buttonSize.height = (*button)->getTextSize().height + buttonPadding*2;
+                buttonSize.width = button->getTextSize().width + buttonLabelLeftPadding*2;
+                buttonSize.height = button->getTextSize().height + buttonLabelTopPadding*2;
 
                 buttonCord.top = top;
                 buttonCord.left = (mainWidgetSize.width - buttonSize.width)/2;
 
-                (*button)->setCoord(buttonCord);
-                (*button)->setSize(buttonSize);
+                button->setCoord(buttonCord);
+                button->setSize(buttonSize);
 
                 top += buttonSize.height + buttonTopPadding;
             }
@@ -353,24 +360,23 @@ namespace MWGui
             mMessageWidget->setCoord(messageWidgetCoord);
         }
 
-        // Set key focus to "Ok" button
-        std::string ok = Misc::StringUtils::lowerCase(MyGUI::LanguageManager::getInstance().replaceTags("#{sOK}"));
-        std::vector<MyGUI::Button*>::const_iterator button;
-        for(button = mButtons.begin(); button != mButtons.end(); ++button)
-        {
-            if(Misc::StringUtils::ciEqual((*button)->getCaption(), ok))
-            {
-                MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(*button);
-                (*button)->eventKeyButtonPressed += MyGUI::newDelegate(this, &InteractiveMessageBox::onKeyPressed);
-                break;
-            }
-        }
+        setVisible(true);
     }
 
-    void InteractiveMessageBox::onKeyPressed(MyGUI::Widget *_sender, MyGUI::KeyCode _key, MyGUI::Char _char)
+    MyGUI::Widget* InteractiveMessageBox::getDefaultKeyFocus()
     {
-        if (_key == MyGUI::KeyCode::Return || _key == MyGUI::KeyCode::NumpadEnter || _key == MyGUI::KeyCode::Space)
-            buttonActivated(_sender);
+        std::vector<std::string> keywords { "sOk", "sYes" };
+        for(MyGUI::Button* button : mButtons)
+        {
+            for (const std::string& keyword : keywords)
+            {
+                if(Misc::StringUtils::ciEqual(MyGUI::LanguageManager::getInstance().replaceTags("#{" + keyword + "}"), button->getCaption()))
+                {
+                    return button;
+                }
+            }
+        }
+        return nullptr;
     }
 
     void InteractiveMessageBox::mousePressed (MyGUI::Widget* pressed)
@@ -382,10 +388,9 @@ namespace MWGui
     {
         mMarkedToDelete = true;
         int index = 0;
-        std::vector<MyGUI::Button*>::const_iterator button;
-        for(button = mButtons.begin(); button != mButtons.end(); ++button)
+        for(const MyGUI::Button* button : mButtons)
         {
-            if(*button == pressed)
+            if(button == pressed)
             {
                 mButtonPressed = index;
                 mMessageBoxManager.onButtonPressed(mButtonPressed);

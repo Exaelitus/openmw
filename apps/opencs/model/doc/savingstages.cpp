@@ -1,20 +1,15 @@
 #include "savingstages.hpp"
 
-#include <fstream>
-
 #include <boost/filesystem.hpp>
 
 #include <QUndoStack>
 
 #include <components/esm/loaddial.hpp>
 
-#include <components/misc/stringops.hpp>
-
 #include "../world/infocollection.hpp"
 #include "../world/cellcoordinates.hpp"
 
 #include "document.hpp"
-#include "savingstate.hpp"
 
 CSMDoc::OpenSaveStage::OpenSaveStage (Document& document, SavingState& state, bool projectFile)
 : mDocument (document), mState (state), mProjectFile (projectFile)
@@ -274,7 +269,7 @@ void CSMDoc::WriteCellCollectionStage::perform (int stage, Messages& messages)
         bool interior = cellRecord.mId.substr (0, 1)!="#";
 
         // count new references and adjust RefNumCount accordingsly
-        int newRefNum = cellRecord.mRefNumCounter;
+        unsigned int newRefNum = cellRecord.mRefNumCounter;
 
         if (references!=mState.getSubRecords().end())
         {
@@ -284,11 +279,17 @@ void CSMDoc::WriteCellCollectionStage::perform (int stage, Messages& messages)
                 const CSMWorld::Record<CSMWorld::CellRef>& ref =
                     mDocument.getData().getReferences().getRecord (*iter);
 
-                if (ref.get().mNew ||
+                CSMWorld::CellRef refRecord = ref.get();
+
+                if (refRecord.mNew ||
                     (!interior && ref.mState==CSMWorld::RecordBase::State_ModifiedOnly &&
                     /// \todo consider worldspace
-                    CSMWorld::CellCoordinates (ref.get().getCellIndex()).getId("")!=ref.get().mCell))
+                    CSMWorld::CellCoordinates (refRecord.getCellIndex()).getId("") != refRecord.mCell))
                     ++cellRecord.mRefNumCounter;
+
+                if (refRecord.mRefNum.mIndex >= newRefNum)
+                    newRefNum = refRecord.mRefNum.mIndex + 1;
+
             }
         }
 
@@ -321,6 +322,10 @@ void CSMDoc::WriteCellCollectionStage::perform (int stage, Messages& messages)
                 {
                     CSMWorld::CellRef refRecord = ref.get();
 
+                    // Check for uninitialized content file
+                    if (!refRecord.mRefNum.hasContentFile())
+                        refRecord.mRefNum.mContentFile = 0;
+
                     // recalculate the ref's cell location
                     std::ostringstream stream;
                     if (!interior)
@@ -329,7 +334,7 @@ void CSMDoc::WriteCellCollectionStage::perform (int stage, Messages& messages)
                         stream << "#" << index.first << " " << index.second;
                     }
 
-                    if (refRecord.mNew ||
+                    if (refRecord.mNew || refRecord.mRefNum.mIndex == 0 ||
                         (!interior && ref.mState==CSMWorld::RecordBase::State_ModifiedOnly &&
                         refRecord.mCell!=stream.str()))
                     {
@@ -351,7 +356,7 @@ void CSMDoc::WriteCellCollectionStage::perform (int stage, Messages& messages)
                         istream >> ignore >> moved.mTarget[0] >> moved.mTarget[1];
 
                         refRecord.mRefNum.save (writer, false, "MVRF");
-                        writer.writeHNT ("CNDT", moved.mTarget, 8);
+                        writer.writeHNT ("CNDT", moved.mTarget);
                     }
 
                     refRecord.save (writer, false, false, ref.mState == CSMWorld::RecordBase::State_Deleted);

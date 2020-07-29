@@ -20,15 +20,14 @@ namespace MWClass
             virtual void insertObject(const MWWorld::Ptr& ptr, const std::string& model, MWPhysics::PhysicsSystem& physics) const;
 
             virtual std::string getName (const MWWorld::ConstPtr& ptr) const;
-            ///< \return name (the one that is to be presented to the user; not the internal one);
-            /// can return an empty string.
+            ///< \return name or ID; can return an empty string.
 
-            virtual boost::shared_ptr<MWWorld::Action> activate (const MWWorld::Ptr& ptr,
+            virtual std::shared_ptr<MWWorld::Action> activate (const MWWorld::Ptr& ptr,
                 const MWWorld::Ptr& actor) const;
             ///< Generate action for activation
 
             virtual bool hasToolTip (const MWWorld::ConstPtr& ptr) const;
-            ///< @return true if this object has a tooltip when focused (default implementation: false)
+            ///< @return true if this object has a tooltip when focused (default implementation: true)
 
             virtual MWGui::ToolTipInfo getToolTipInfo (const MWWorld::ConstPtr& ptr, int count) const;
             ///< @return the content of the tool tip to be displayed. raises exception if the object has no tooltip.
@@ -47,12 +46,6 @@ namespace MWClass
             ///< Returns total weight of objects inside this object (including modifications from magic
             /// effects). Throws an exception, if the object can't hold other objects.
 
-            virtual void lock (const MWWorld::Ptr& ptr, int lockLevel = 0) const;
-            ///< Lock object
-
-            virtual void unlock (const MWWorld::Ptr& ptr) const;
-            ///< Unlock object
-
             virtual bool canLock(const MWWorld::ConstPtr &ptr) const;
 
             virtual void readAdditionalState (const MWWorld::Ptr& ptr, const ESM::ObjectState& state)
@@ -70,6 +63,8 @@ namespace MWClass
             virtual void restock (const MWWorld::Ptr &ptr) const;
 
             virtual std::string getModel(const MWWorld::ConstPtr &ptr) const;
+
+            virtual bool useAnim() const;
     };
 }
 

@@ -16,6 +16,7 @@ namespace Nif
 {
     class NiGravity;
     class NiPlanarCollider;
+    class NiSphericalCollider;
     class NiColorData;
 }
 
@@ -35,8 +36,11 @@ namespace NifOsg
 
         void setQuota(int quota);
 
+        virtual void drawImplementation(osg::RenderInfo& renderInfo) const;
+
     private:
         int mQuota;
+        osg::ref_ptr<osg::Vec3Array> mNormalArray;
     };
 
     // HACK: Particle doesn't allow setting the initial age, but we need this for loading the particle system state
@@ -77,6 +81,8 @@ namespace NifOsg
         ParticleShooter();
         ParticleShooter(const ParticleShooter& copy, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
 
+        ParticleShooter& operator=(const ParticleShooter&) = delete;
+
         META_Object(NifOsg, ParticleShooter)
 
         virtual void shoot(osgParticle::Particle* particle) const;
@@ -110,12 +116,31 @@ namespace NifOsg
         osg::Plane mPlaneInParticleSpace;
     };
 
+    class SphericalCollider : public osgParticle::Operator
+    {
+    public:
+        SphericalCollider(const Nif::NiSphericalCollider* collider);
+        SphericalCollider();
+        SphericalCollider(const SphericalCollider& copy, const osg::CopyOp& copyop);
+
+        META_Object(NifOsg, SphericalCollider)
+
+        virtual void beginOperate(osgParticle::Program* program);
+        virtual void operate(osgParticle::Particle* particle, double dt);
+    private:
+        float mBounceFactor;
+        osg::BoundingSphere mSphere;
+        osg::BoundingSphere mSphereInParticleSpace;
+    };
+
     class GrowFadeAffector : public osgParticle::Operator
     {
     public:
         GrowFadeAffector(float growTime, float fadeTime);
         GrowFadeAffector();
         GrowFadeAffector(const GrowFadeAffector& copy, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
+
+        GrowFadeAffector& operator=(const GrowFadeAffector&) = delete;
 
         META_Object(NifOsg, GrowFadeAffector)
 
@@ -129,13 +154,14 @@ namespace NifOsg
         float mCachedDefaultSize;
     };
 
-    typedef ValueInterpolator<Nif::Vector4KeyMap, LerpFunc> Vec4Interpolator;
     class ParticleColorAffector : public osgParticle::Operator
     {
     public:
         ParticleColorAffector(const Nif::NiColorData* clrdata);
         ParticleColorAffector();
         ParticleColorAffector(const ParticleColorAffector& copy, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
+
+        ParticleColorAffector& operator=(const ParticleColorAffector&) = delete;
 
         META_Object(NifOsg, ParticleColorAffector)
 
@@ -151,6 +177,8 @@ namespace NifOsg
         GravityAffector(const Nif::NiGravity* gravity);
         GravityAffector();
         GravityAffector(const GravityAffector& copy, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
+
+        GravityAffector& operator=(const GravityAffector&) = delete;
 
         META_Object(NifOsg, GravityAffector)
 
@@ -178,7 +206,14 @@ namespace NifOsg
     public:
         FindGroupByRecIndex(int recIndex);
 
-        virtual void apply(osg::Node &searchNode);
+        virtual void apply(osg::Node &node);
+
+        // Technically not required as the default implementation would trickle down to apply(Node&) anyway,
+        // but we'll shortcut instead to avoid the chain of virtual function calls
+        virtual void apply(osg::MatrixTransform& node);
+        virtual void apply(osg::Geometry& node);
+
+        void applyNode(osg::Node& searchNode);
 
         osg::Group* mFound;
         osg::NodePath mFoundPath;

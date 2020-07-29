@@ -92,6 +92,12 @@ namespace Nif
     void NiMaterialColorController::read(NIFStream *nif)
     {
         Controller::read(nif);
+        // Two bits that correspond to the controlled material color.
+        // 00: Ambient
+        // 01: Diffuse
+        // 10: Specular
+        // 11: Emissive
+        targetColor = (flags >> 4) & 3;
         data.read(nif);
     }
 
@@ -101,16 +107,26 @@ namespace Nif
         data.post(nif);
     }
 
+    void NiLookAtController::read(NIFStream *nif)
+    {
+        Controller::read(nif);
+        target.read(nif);
+    }
+
+    void NiLookAtController::post(NIFFile *nif)
+    {
+        Controller::post(nif);
+        target.post(nif);
+    }
+
     void NiPathController::read(NIFStream *nif)
     {
         Controller::read(nif);
 
-        /*
-           int = 1
-           2xfloat
-           short = 0 or 1
-        */
-        nif->skip(14);
+        bankDir = nif->getInt();
+        maxBankAngle = nif->getFloat();
+        smoothing = nif->getFloat();
+        followAxis = nif->getShort();
         posData.read(nif);
         floatData.read(nif);
     }
@@ -127,7 +143,7 @@ namespace Nif
     {
         Controller::read(nif);
 
-        nif->getUShort(); // always 0
+        uvSet = nif->getUShort();
         data.read(nif);
     }
 
@@ -161,11 +177,24 @@ namespace Nif
         data.post(nif);
     }
 
+    void NiRollController::read(NIFStream *nif)
+    {
+        Controller::read(nif);
+        data.read(nif);
+    }
+
+    void NiRollController::post(NIFFile *nif)
+    {
+        Controller::post(nif);
+        data.post(nif);
+    }
+
     void NiGeomMorpherController::read(NIFStream *nif)
     {
         Controller::read(nif);
         data.read(nif);
-        nif->getChar(); // always 0
+        if (nif->getVersion() >= NIFFile::NIFVersion::VER_MW)
+            /*bool alwaysActive = */nif->getChar(); // Always 0
     }
 
     void NiGeomMorpherController::post(NIFFile *nif)

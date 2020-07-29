@@ -56,6 +56,7 @@ namespace CSVWorld
             QAction *mEditAction;
             QAction *mCreateAction;
             QAction *mCloneAction;
+            QAction *mTouchAction;
             QAction *mRevertAction;
             QAction *mDeleteAction;
             QAction *mMoveUpAction;
@@ -64,6 +65,7 @@ namespace CSVWorld
             QAction *mPreviewAction;
             QAction *mExtendedDeleteAction;
             QAction *mExtendedRevertAction;
+            QAction *mHelpAction;
             TableEditIdAction *mEditIdAction;
             CSMWorld::IdTableProxyModel *mProxyModel;
             CSMWorld::IdTableBase *mModel;
@@ -115,6 +117,8 @@ namespace CSVWorld
 
             void cloneRequest(const CSMWorld::UniversalId&);
 
+            void touchRequest(const std::vector<CSMWorld::UniversalId>& ids);
+
             void closeRequest();
 
             void extendedDeleteConfigRequest(const std::vector<std::string> &selectedIds);
@@ -125,9 +129,13 @@ namespace CSVWorld
 
             void editCell();
 
+            static void openHelp();
+
             void editRecord();
 
             void cloneRecord();
+
+            void touchRecord();
 
             void moveUpRecord();
 
@@ -151,7 +159,7 @@ namespace CSVWorld
 
             void requestFocus (const std::string& id);
 
-            void recordFilterChanged (boost::shared_ptr<CSMFilter::Node> filter);
+            void recordFilterChanged (std::shared_ptr<CSMFilter::Node> filter);
 
             void rowAdded(const std::string &id);
     };

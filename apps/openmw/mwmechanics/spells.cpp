@@ -1,38 +1,74 @@
 #include "spells.hpp"
 
-#include <cstdlib>
-
+#include <components/debug/debuglog.hpp>
 #include <components/esm/loadspel.hpp>
 #include <components/esm/spellstate.hpp>
 #include <components/misc/rng.hpp>
+#include <components/misc/stringops.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 
+#include "actorutil.hpp"
+#include "creaturestats.hpp"
 #include "magiceffects.hpp"
+#include "stat.hpp"
 
 namespace MWMechanics
 {
-    Spells::TIterator Spells::begin() const
+    Spells::Spells()
+        : mSpellsChanged(false)
+    {
+    }
+
+    std::map<const ESM::Spell*, SpellParams>::const_iterator Spells::begin() const
     {
         return mSpells.begin();
     }
 
-    Spells::TIterator Spells::end() const
+    std::map<const ESM::Spell*, SpellParams>::const_iterator Spells::end() const
     {
         return mSpells.end();
     }
 
-    const ESM::Spell* Spells::getSpell(const std::string& id) const
+    void Spells::rebuildEffects() const
     {
-        return MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().find(id);
+        mEffects = MagicEffects();
+        mSourcedEffects.clear();
+
+        for (const auto& iter : mSpells)
+        {
+            const ESM::Spell *spell = iter.first;
+
+            if (spell->mData.mType==ESM::Spell::ST_Ability || spell->mData.mType==ESM::Spell::ST_Blight ||
+                spell->mData.mType==ESM::Spell::ST_Disease || spell->mData.mType==ESM::Spell::ST_Curse)
+            {
+                int i=0;
+                for (const auto& effect : spell->mEffects.mList)
+                {
+                    if (iter.second.mPurgedEffects.find(i) != iter.second.mPurgedEffects.end())
+                        continue; // effect was purged
+
+                    float random = 1.f;
+                    if (iter.second.mEffectRands.find(i) != iter.second.mEffectRands.end())
+                        random = iter.second.mEffectRands.at(i);
+
+                    float magnitude = effect.mMagnMin + (effect.mMagnMax - effect.mMagnMin) * random;
+                    mEffects.add (effect, magnitude);
+                    mSourcedEffects[spell].add(MWMechanics::EffectKey(effect), magnitude);
+
+                    ++i;
+                }
+            }
+        }
     }
 
     bool Spells::hasSpell(const std::string &spell) const
     {
-        return hasSpell(getSpell(spell));
+        return hasSpell(SpellList::getSpell(spell));
     }
 
     bool Spells::hasSpell(const ESM::Spell *spell) const
@@ -41,6 +77,16 @@ namespace MWMechanics
     }
 
     void Spells::add (const ESM::Spell* spell)
+    {
+        mSpellList->add(spell);
+    }
+
+    void Spells::add (const std::string& spellId)
+    {
+        add(SpellList::getSpell(spellId));
+    }
+
+    void Spells::addSpell(const ESM::Spell* spell)
     {
         if (mSpells.find (spell)==mSpells.end())
         {
@@ -53,98 +99,60 @@ namespace MWMechanics
                 for (unsigned int i=0; i<spell->mEffects.mList.size();++i)
                 {
                     if (spell->mEffects.mList[i].mMagnMin != spell->mEffects.mList[i].mMagnMax)
-                        random[i] = Misc::Rng::rollClosedProbability();
+                    {
+                        int delta = spell->mEffects.mList[i].mMagnMax - spell->mEffects.mList[i].mMagnMin;
+                        random[i] = Misc::Rng::rollDice(delta + 1) / static_cast<float>(delta);
+                    }
                 }
             }
 
-            if (hasCorprusEffect(spell))
-            {
-                CorprusStats corprus;
-                corprus.mWorsenings = 0;
-                corprus.mNextWorsening = MWBase::Environment::get().getWorld()->getTimeStamp() + CorprusStats::sWorseningPeriod;
-
-                mCorprusSpells[spell] = corprus;
-            }
-
-            mSpells.insert (std::make_pair (spell, random));
+            SpellParams params;
+            params.mEffectRands = random;
+            mSpells.insert (std::make_pair (spell, params));
+            mSpellsChanged = true;
         }
-    }
-
-    void Spells::add (const std::string& spellId)
-    {
-        add(getSpell(spellId));
     }
 
     void Spells::remove (const std::string& spellId)
     {
-        const ESM::Spell* spell = getSpell(spellId);
-        TContainer::iterator iter = mSpells.find (spell);
-
-        std::map<SpellKey, CorprusStats>::iterator corprusIt = mCorprusSpells.find(spell);
-
-        // if it's corprus, remove negative and keep positive effects
-        if (corprusIt != mCorprusSpells.end())
-        {
-            worsenCorprus(spell);
-            if (mPermanentSpellEffects.find(spell) != mPermanentSpellEffects.end())
-            {
-                MagicEffects & effects = mPermanentSpellEffects[spell];
-                for (MagicEffects::Collection::const_iterator effectIt = effects.begin(); effectIt != effects.end();)
-                {
-                    const ESM::MagicEffect * magicEffect = MWBase::Environment::get().getWorld()->getStore().get<ESM::MagicEffect>().find(effectIt->first.mId);
-                    if (magicEffect->mData.mFlags & ESM::MagicEffect::Harmful)
-                        effects.remove((effectIt++)->first);
-                    else
-                        ++effectIt;
-                }
-            }
-            mCorprusSpells.erase(corprusIt);
-        }
-
-        if (iter!=mSpells.end())
-            mSpells.erase (iter);
+        const auto spell = SpellList::getSpell(spellId);
+        removeSpell(spell);
+        mSpellList->remove(spell);
 
         if (spellId==mSelectedSpell)
             mSelectedSpell.clear();
     }
 
-    MagicEffects Spells::getMagicEffects() const
+    void Spells::removeSpell(const ESM::Spell* spell)
     {
-        // TODO: These are recalculated every frame, no need to do that
-
-        MagicEffects effects;
-
-        for (TIterator iter = mSpells.begin(); iter!=mSpells.end(); ++iter)
+        const auto it = mSpells.find(spell);
+        if(it != mSpells.end())
         {
-            const ESM::Spell *spell = iter->first;
-
-            if (spell->mData.mType==ESM::Spell::ST_Ability || spell->mData.mType==ESM::Spell::ST_Blight ||
-                spell->mData.mType==ESM::Spell::ST_Disease || spell->mData.mType==ESM::Spell::ST_Curse)
-            {
-                int i=0;
-                for (std::vector<ESM::ENAMstruct>::const_iterator it = spell->mEffects.mList.begin(); it != spell->mEffects.mList.end(); ++it)
-                {
-                    float random = 1.f;
-                    if (iter->second.find(i) != iter->second.end())
-                        random = iter->second.at(i);
-
-                    effects.add (*it, it->mMagnMin + (it->mMagnMax - it->mMagnMin) * random);
-                    ++i;
-                }
-            }
+            mSpells.erase(it);
+            mSpellsChanged = true;
         }
-
-        for (std::map<SpellKey, MagicEffects>::const_iterator it = mPermanentSpellEffects.begin(); it != mPermanentSpellEffects.end(); ++it)
-        {
-            effects += it->second;
-        }
-
-        return effects;
     }
 
-    void Spells::clear()
+    MagicEffects Spells::getMagicEffects() const
+    {
+        if (mSpellsChanged) {
+            rebuildEffects();
+            mSpellsChanged = false;
+        }
+        return mEffects;
+    }
+
+    void Spells::removeAllSpells()
     {
         mSpells.clear();
+        mSpellsChanged = true;
+    }
+
+    void Spells::clear(bool modifyBase)
+    {
+        removeAllSpells();
+        if(modifyBase)
+            mSpellList->clear();
     }
 
     void Spells::setSelectedSpell (const std::string& spellId)
@@ -159,145 +167,121 @@ namespace MWMechanics
 
     bool Spells::isSpellActive(const std::string &id) const
     {
-        TContainer::const_iterator found = mSpells.find(getSpell(id));
-        if (found != mSpells.end())
-        {
-            const ESM::Spell *spell = found->first;
+        if (id.empty())
+            return false;
 
-            return (spell->mData.mType==ESM::Spell::ST_Ability || spell->mData.mType==ESM::Spell::ST_Blight ||
-                spell->mData.mType==ESM::Spell::ST_Disease || spell->mData.mType==ESM::Spell::ST_Curse);
+        const ESM::Spell* spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(id);
+        if (spell && hasSpell(spell))
+        {
+            auto type = spell->mData.mType;
+            return (type==ESM::Spell::ST_Ability || type==ESM::Spell::ST_Blight || type==ESM::Spell::ST_Disease || type==ESM::Spell::ST_Curse);
         }
+
+        return false;
+    }
+
+    bool Spells::hasDisease(const ESM::Spell::SpellType type) const
+    {
+        for (const auto& iter : mSpells)
+        {
+            const ESM::Spell *spell = iter.first;
+            if (spell->mData.mType == type)
+                return true;
+        }
+
         return false;
     }
 
     bool Spells::hasCommonDisease() const
     {
-        for (TIterator iter = mSpells.begin(); iter!=mSpells.end(); ++iter)
-        {
-            const ESM::Spell *spell = iter->first;
-            if (spell->mData.mType == ESM::Spell::ST_Disease)
-                return true;
-        }
-
-        return false;
+        return hasDisease(ESM::Spell::ST_Disease);
     }
 
     bool Spells::hasBlightDisease() const
     {
-        for (TIterator iter = mSpells.begin(); iter!=mSpells.end(); ++iter)
+        return hasDisease(ESM::Spell::ST_Blight);
+    }
+
+    void Spells::purge(const SpellFilter& filter)
+    {
+        std::vector<std::string> purged;
+        for (auto iter = mSpells.begin(); iter!=mSpells.end();)
         {
             const ESM::Spell *spell = iter->first;
-            if (spell->mData.mType == ESM::Spell::ST_Blight)
-                return true;
+            if (filter(spell))
+            {
+                mSpells.erase(iter++);
+                purged.push_back(spell->mId);
+                mSpellsChanged = true;
+            }
+            else
+                ++iter;
         }
-
-        return false;
+        if(!purged.empty())
+            mSpellList->removeAll(purged);
     }
 
     void Spells::purgeCommonDisease()
     {
-        for (TContainer::iterator iter = mSpells.begin(); iter!=mSpells.end();)
-        {
-            const ESM::Spell *spell = iter->first;
-            if (spell->mData.mType == ESM::Spell::ST_Disease)
-                mSpells.erase(iter++);
-            else
-                ++iter;
-        }
+        purge([](auto spell) { return spell->mData.mType == ESM::Spell::ST_Disease; });
     }
 
     void Spells::purgeBlightDisease()
     {
-        for (TContainer::iterator iter = mSpells.begin(); iter!=mSpells.end();)
-        {
-            const ESM::Spell *spell = iter->first;
-            if (spell->mData.mType == ESM::Spell::ST_Blight && !hasCorprusEffect(spell))
-                mSpells.erase(iter++);
-            else
-                ++iter;
-        }
+        purge([](auto spell) { return spell->mData.mType == ESM::Spell::ST_Blight && !hasCorprusEffect(spell); });
     }
 
     void Spells::purgeCorprusDisease()
     {
-        for (TContainer::iterator iter = mSpells.begin(); iter!=mSpells.end();)
-        {
-            const ESM::Spell *spell = iter->first;
-            if (hasCorprusEffect(spell))
-                mSpells.erase(iter++);
-            else
-                ++iter;
-        }
+        purge(&hasCorprusEffect);
     }
 
     void Spells::purgeCurses()
     {
-        for (TContainer::iterator iter = mSpells.begin(); iter!=mSpells.end();)
+        purge([](auto spell) { return spell->mData.mType == ESM::Spell::ST_Curse; });
+    }
+
+    void Spells::removeEffects(const std::string &id)
+    {
+        if (isSpellActive(id))
         {
-            const ESM::Spell *spell = iter->first;
-            if (spell->mData.mType == ESM::Spell::ST_Curse)
-                mSpells.erase(iter++);
-            else
-                ++iter;
+            for (auto& spell : mSpells)
+            {
+                if (spell.first == SpellList::getSpell(id))
+                {
+                    for (long unsigned int i = 0; i != spell.first->mEffects.mList.size(); i++)
+                    {
+                        spell.second.mPurgedEffects.insert(i);
+                    }
+                }
+            }
+
+            mSpellsChanged = true;
         }
     }
 
     void Spells::visitEffectSources(EffectSourceVisitor &visitor) const
     {
-        for (TIterator it = begin(); it != end(); ++it)
-        {
-            const ESM::Spell* spell = it->first;
-
-            // these are the spell types that are permanently in effect
-            if (!(spell->mData.mType == ESM::Spell::ST_Ability)
-                    && !(spell->mData.mType == ESM::Spell::ST_Disease)
-                    && !(spell->mData.mType == ESM::Spell::ST_Curse)
-                    && !(spell->mData.mType == ESM::Spell::ST_Blight))
-                continue;
-            const ESM::EffectList& list = spell->mEffects;
-            int i=0;
-            for (std::vector<ESM::ENAMstruct>::const_iterator effectIt = list.mList.begin();
-                 effectIt != list.mList.end(); ++effectIt, ++i)
-            {
-                float random = 1.f;
-                if (it->second.find(i) != it->second.end())
-                    random = it->second.at(i);
-
-                float magnitude = effectIt->mMagnMin + (effectIt->mMagnMax - effectIt->mMagnMin) * random;
-                visitor.visit(MWMechanics::EffectKey(*effectIt), spell->mName, spell->mId, -1, magnitude);
-            }
+        if (mSpellsChanged) {
+            rebuildEffects();
+            mSpellsChanged = false;
         }
-    }
 
-    void Spells::worsenCorprus(const ESM::Spell* spell)
-    {
-        mCorprusSpells[spell].mNextWorsening = MWBase::Environment::get().getWorld()->getTimeStamp() + CorprusStats::sWorseningPeriod;
-        mCorprusSpells[spell].mWorsenings++;
-
-        // update worsened effects
-        mPermanentSpellEffects[spell] = MagicEffects();
-        int i=0;
-        for (std::vector<ESM::ENAMstruct>::const_iterator effectIt = spell->mEffects.mList.begin(); effectIt != spell->mEffects.mList.end(); ++effectIt, ++i)
+        for (const auto& it : mSourcedEffects)
         {
-            const ESM::MagicEffect * magicEffect = MWBase::Environment::get().getWorld()->getStore().get<ESM::MagicEffect>().find(effectIt->mEffectID);
-            if ((effectIt->mEffectID != ESM::MagicEffect::Corprus) && (magicEffect->mData.mFlags & ESM::MagicEffect::UncappedDamage)) // APPLIED_ONCE
+            const ESM::Spell * spell = it.first;
+            for (const auto& effectIt : it.second)
             {
-                float random = 1.f;
-                if (mSpells[spell].find(i) != mSpells[spell].end())
-                    random = mSpells[spell].at(i);
-
-                float magnitude = effectIt->mMagnMin + (effectIt->mMagnMax - effectIt->mMagnMin) * random;
-                magnitude *= std::max(1, mCorprusSpells[spell].mWorsenings);
-                mPermanentSpellEffects[spell].add(MWMechanics::EffectKey(*effectIt), MWMechanics::EffectParam(magnitude));
+                visitor.visit(effectIt.first, spell->mName, spell->mId, -1, effectIt.second.getMagnitude());
             }
         }
     }
 
     bool Spells::hasCorprusEffect(const ESM::Spell *spell)
     {
-        for (std::vector<ESM::ENAMstruct>::const_iterator effectIt = spell->mEffects.mList.begin(); effectIt != spell->mEffects.mList.end(); ++effectIt)
+        for (const auto& effectIt : spell->mEffects.mList)
         {
-            if (effectIt->mEffectID == ESM::MagicEffect::Corprus)
+            if (effectIt.mEffectID == ESM::MagicEffect::Corprus)
             {
                 return true;
             }
@@ -305,18 +289,46 @@ namespace MWMechanics
         return false;
     }
 
-    const std::map<Spells::SpellKey, Spells::CorprusStats> &Spells::getCorprusSpells() const
+    void Spells::purgeEffect(int effectId)
     {
-        return mCorprusSpells;
+        for (auto& spellIt : mSpells)
+        {
+            int i = 0;
+            for (auto& effectIt : spellIt.first->mEffects.mList)
+            {
+                if (effectIt.mEffectID == effectId)
+                {
+                    spellIt.second.mPurgedEffects.insert(i);
+                    mSpellsChanged = true;
+                }
+                ++i;
+            }
+        }
+    }
+
+    void Spells::purgeEffect(int effectId, const std::string & sourceId)
+    {
+        const ESM::Spell * spell = SpellList::getSpell(sourceId);
+        auto spellIt = mSpells.find(spell);
+        if (spellIt == mSpells.end())
+            return;
+
+        int i = 0;
+        for (auto& effectIt : spellIt->first->mEffects.mList)
+        {
+            if (effectIt.mEffectID == effectId)
+            {
+                spellIt->second.mPurgedEffects.insert(i);
+                mSpellsChanged = true;
+            }
+            ++i;
+        }
     }
 
     bool Spells::canUsePower(const ESM::Spell* spell) const
     {
-        std::map<SpellKey, MWWorld::TimeStamp>::const_iterator it = mUsedPowers.find(spell);
-        if (it == mUsedPowers.end() || it->second + 24 <= MWBase::Environment::get().getWorld()->getTimeStamp())
-            return true;
-        else
-            return false;
+        const auto it = mUsedPowers.find(spell);
+        return it == mUsedPowers.end() || it->second + 24 <= MWBase::Environment::get().getWorld()->getTimeStamp();
     }
 
     void Spells::usePower(const ESM::Spell* spell)
@@ -324,19 +336,29 @@ namespace MWMechanics
         mUsedPowers[spell] = MWBase::Environment::get().getWorld()->getTimeStamp();
     }
 
-    void Spells::readState(const ESM::SpellState &state)
+    void Spells::readState(const ESM::SpellState &state, CreatureStats* creatureStats)
     {
+        const auto& baseSpells = mSpellList->getSpells();
+
         for (ESM::SpellState::TContainer::const_iterator it = state.mSpells.begin(); it != state.mSpells.end(); ++it)
         {
             // Discard spells that are no longer available due to changed content files
             const ESM::Spell* spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(it->first);
             if (spell)
             {
-                mSpells[spell] = it->second;
+                mSpells[spell].mEffectRands = it->second.mEffectRands;
+                mSpells[spell].mPurgedEffects = it->second.mPurgedEffects;
 
                 if (it->first == state.mSelectedSpell)
                     mSelectedSpell = it->first;
             }
+        }
+        // Add spells from the base record
+        for(const std::string& id : baseSpells)
+        {
+            const ESM::Spell* spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(id);
+            if(spell)
+                addSpell(spell);
         }
 
         for (std::map<std::string, ESM::TimeStamp>::const_iterator it = state.mUsedPowers.begin(); it != state.mUsedPowers.end(); ++it)
@@ -347,6 +369,32 @@ namespace MWMechanics
             mUsedPowers[spell] = MWWorld::TimeStamp(it->second);
         }
 
+        for (std::map<std::string, ESM::SpellState::CorprusStats>::const_iterator it = state.mCorprusSpells.begin(); it != state.mCorprusSpells.end(); ++it)
+        {
+            const ESM::Spell * spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(it->first);
+            if (!spell)
+                continue;
+
+            CorprusStats stats;
+
+            int worsening = state.mCorprusSpells.at(it->first).mWorsenings;
+
+            for (int i=0; i<ESM::Attribute::Length; ++i)
+                stats.mWorsenings[i] = 0;
+
+            for (auto& effect : spell->mEffects.mList)
+            {
+                if (effect.mEffectID == ESM::MagicEffect::DrainAttribute)
+                    stats.mWorsenings[effect.mAttribute] = worsening;
+            }
+            stats.mNextWorsening = MWWorld::TimeStamp(state.mCorprusSpells.at(it->first).mNextWorsening);
+
+            creatureStats->addCorprusSpell(it->first, stats);
+        }
+
+        mSpellsChanged = true;
+
+        // Permanent effects are used only to keep the custom magnitude of corprus spells effects (after cure too), and only in old saves. Convert data to the new approach.
         for (std::map<std::string, std::vector<ESM::SpellState::PermanentSpellEffectInfo> >::const_iterator it =
             state.mPermanentSpellEffects.begin(); it != state.mPermanentSpellEffects.end(); ++it)
         {
@@ -354,53 +402,79 @@ namespace MWMechanics
             if (!spell)
                 continue;
 
-            mPermanentSpellEffects[spell] = MagicEffects();
+            // Import data only for player, other actors should not suffer from corprus worsening.
+            MWWorld::Ptr player = getPlayer();
+            if (creatureStats->getActorId() != player.getClass().getCreatureStats(player).getActorId())
+                return;
+
+            // Note: if target actor has the Restore attirbute effects, stats will be restored.
             for (std::vector<ESM::SpellState::PermanentSpellEffectInfo>::const_iterator effectIt = it->second.begin(); effectIt != it->second.end(); ++effectIt)
             {
-                mPermanentSpellEffects[spell].add(EffectKey(effectIt->mId, effectIt->mArg), effectIt->mMagnitude);
+                // Applied corprus effects are already in loaded stats modifiers
+                if (effectIt->mId == ESM::MagicEffect::FortifyAttribute)
+                {
+                    AttributeValue attr = creatureStats->getAttribute(effectIt->mArg);
+                    attr.setModifier(attr.getModifier() - effectIt->mMagnitude);
+                    attr.damage(-effectIt->mMagnitude);
+                    creatureStats->setAttribute(effectIt->mArg, attr);
+                }
+                else if (effectIt->mId == ESM::MagicEffect::DrainAttribute)
+                {
+                    AttributeValue attr = creatureStats->getAttribute(effectIt->mArg);
+                    attr.setModifier(attr.getModifier() + effectIt->mMagnitude);
+                    attr.damage(effectIt->mMagnitude);
+                    creatureStats->setAttribute(effectIt->mArg, attr);
+                }
             }
-        }
-
-        mCorprusSpells.clear();
-        for (std::map<std::string, ESM::SpellState::CorprusStats>::const_iterator it = state.mCorprusSpells.begin(); it != state.mCorprusSpells.end(); ++it)
-        {
-            const ESM::Spell* spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(it->first);
-            if (!spell) // Discard unavailable corprus spells
-                continue;
-            mCorprusSpells[spell].mWorsenings = state.mCorprusSpells.at(it->first).mWorsenings;
-            mCorprusSpells[spell].mNextWorsening = MWWorld::TimeStamp(state.mCorprusSpells.at(it->first).mNextWorsening);
         }
     }
 
     void Spells::writeState(ESM::SpellState &state) const
     {
-        for (TContainer::const_iterator it = mSpells.begin(); it != mSpells.end(); ++it)
-            state.mSpells.insert(std::make_pair(it->first->mId, it->second));
+        const auto& baseSpells = mSpellList->getSpells();
+        for (const auto& it : mSpells)
+        {
+            //Don't save spells stored in the base record
+            if(std::find(baseSpells.begin(), baseSpells.end(), it.first->mId) == baseSpells.end())
+            {
+                ESM::SpellState::SpellParams params;
+                params.mEffectRands = it.second.mEffectRands;
+                params.mPurgedEffects = it.second.mPurgedEffects;
+                state.mSpells.insert(std::make_pair(it.first->mId, params));
+            }
+        }
 
         state.mSelectedSpell = mSelectedSpell;
 
-        for (std::map<SpellKey, MWWorld::TimeStamp>::const_iterator it = mUsedPowers.begin(); it != mUsedPowers.end(); ++it)
-            state.mUsedPowers[it->first->mId] = it->second.toEsm();
+        for (const auto& it : mUsedPowers)
+            state.mUsedPowers[it.first->mId] = it.second.toEsm();
+    }
 
-        for (std::map<SpellKey, MagicEffects>::const_iterator it = mPermanentSpellEffects.begin(); it != mPermanentSpellEffects.end(); ++it)
+    bool Spells::setSpells(const std::string& actorId)
+    {
+        bool result;
+        std::tie(mSpellList, result) = MWBase::Environment::get().getWorld()->getStore().getSpellList(actorId);
+        mSpellList->addListener(this);
+        for(const auto& id : mSpellList->getSpells())
+            addSpell(SpellList::getSpell(id));
+        return result;
+    }
+
+    void Spells::addAllToInstance(const std::vector<std::string>& spells)
+    {
+        for(const std::string& id : spells)
         {
-            std::vector<ESM::SpellState::PermanentSpellEffectInfo> effectList;
-            for (MagicEffects::Collection::const_iterator effectIt = it->second.begin(); effectIt != it->second.end(); ++effectIt)
-            {
-                ESM::SpellState::PermanentSpellEffectInfo info;
-                info.mId = effectIt->first.mId;
-                info.mArg = effectIt->first.mArg;
-                info.mMagnitude = effectIt->second.getModifier();
-
-                effectList.push_back(info);
-            }
-            state.mPermanentSpellEffects[it->first->mId] = effectList;
+            const ESM::Spell* spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(id);
+            if(spell)
+                addSpell(spell);
+            else
+                Log(Debug::Warning) << "Warning: ignoring nonexistent spell '" << id << "'";
         }
+    }
 
-        for (std::map<SpellKey, CorprusStats>::const_iterator it = mCorprusSpells.begin(); it != mCorprusSpells.end(); ++it)
-        {
-            state.mCorprusSpells[it->first->mId].mWorsenings = mCorprusSpells.at(it->first).mWorsenings;
-            state.mCorprusSpells[it->first->mId].mNextWorsening = mCorprusSpells.at(it->first).mNextWorsening.toEsm();
-        }
+    Spells::~Spells()
+    {
+        if(mSpellList)
+            mSpellList->removeListener(this);
     }
 }

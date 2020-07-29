@@ -1,15 +1,14 @@
 #include "aitravel.hpp"
 
 #include <components/esm/aisequence.hpp>
-#include <components/esm/loadcell.hpp>
 
-#include "../mwbase/world.hpp"
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
+#include "../mwbase/world.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/cellstore.hpp"
 
-#include "steering.hpp"
 #include "movement.hpp"
 #include "creaturestats.hpp"
 
@@ -28,59 +27,67 @@ bool isWithinMaxRange(const osg::Vec3f& pos1, const osg::Vec3f& pos2)
 
 namespace MWMechanics
 {
+    AiTravel::AiTravel(float x, float y, float z, AiTravel*)
+        : mX(x), mY(y), mZ(z), mHidden(false)
+    {
+    }
+
+    AiTravel::AiTravel(float x, float y, float z, AiInternalTravel* derived)
+        : TypedAiPackage<AiTravel>(derived), mX(x), mY(y), mZ(z), mHidden(true)
+    {
+    }
+
     AiTravel::AiTravel(float x, float y, float z)
-    : mX(x),mY(y),mZ(z)
-    , mCellX(std::numeric_limits<int>::max())
-    , mCellY(std::numeric_limits<int>::max())
+        : AiTravel(x, y, z, this)
     {
     }
 
     AiTravel::AiTravel(const ESM::AiSequence::AiTravel *travel)
-        : mX(travel->mData.mX), mY(travel->mData.mY), mZ(travel->mData.mZ)
-        , mCellX(std::numeric_limits<int>::max())
-        , mCellY(std::numeric_limits<int>::max())
+        : mX(travel->mData.mX), mY(travel->mData.mY), mZ(travel->mData.mZ), mHidden(false)
     {
-
-    }
-
-    AiTravel *MWMechanics::AiTravel::clone() const
-    {
-        return new AiTravel(*this);
+        // Hidden ESM::AiSequence::AiTravel package should be converted into MWMechanics::AiInternalTravel type
+        assert(!travel->mHidden);
     }
 
     bool AiTravel::execute (const MWWorld::Ptr& actor, CharacterController& characterController, AiState& state, float duration)
     {
-        ESM::Position pos = actor.getRefData().getPosition();
+        MWBase::MechanicsManager* mechMgr = MWBase::Environment::get().getMechanicsManager();
 
-        actor.getClass().getCreatureStats(actor).setMovementFlag(CreatureStats::Flag_Run, false);
-        actor.getClass().getCreatureStats(actor).setDrawState(DrawState_Nothing);
-
-        if (!isWithinMaxRange(osg::Vec3f(mX, mY, mZ), pos.asVec3()))
+        if (mechMgr->isTurningToPlayer(actor) || mechMgr->getGreetingState(actor) == Greet_InProgress)
             return false;
 
-        if (pathTo(actor, ESM::Pathgrid::Point(static_cast<int>(mX), static_cast<int>(mY), static_cast<int>(mZ)), duration))
+        const osg::Vec3f actorPos(actor.getRefData().getPosition().asVec3());
+        const osg::Vec3f targetPos(mX, mY, mZ);
+
+        auto& stats = actor.getClass().getCreatureStats(actor);
+        stats.setMovementFlag(CreatureStats::Flag_Run, false);
+        stats.setDrawState(DrawState_Nothing);
+
+        // Note: we should cancel internal "return after combat" package, if original location is too far away
+        if (!isWithinMaxRange(targetPos, actorPos))
+            return mHidden;
+
+        // Unfortunately, with vanilla assets destination is sometimes blocked by other actor.
+        // If we got close to target, check for actors nearby. If they are, finish AI package.
+        int destinationTolerance = 64;
+        if (distance(actorPos, targetPos) <= destinationTolerance)
+        {
+            std::vector<MWWorld::Ptr> targetActors;
+            std::pair<MWWorld::Ptr, osg::Vec3f> result = MWBase::Environment::get().getWorld()->getHitContact(actor, destinationTolerance, targetActors);
+
+            if (!result.first.isEmpty())
+            {
+                actor.getClass().getMovementSettings(actor).mPosition[1] = 0;
+                return true;
+            }
+        }
+
+        if (pathTo(actor, targetPos, duration))
         {
             actor.getClass().getMovementSettings(actor).mPosition[1] = 0;
             return true;
         }
         return false;
-    }
-
-    bool AiTravel::doesPathNeedRecalc(ESM::Pathgrid::Point dest, const ESM::Cell *cell)
-    {
-        bool cellChange = cell->mData.mX != mCellX || cell->mData.mY != mCellY;
-        if (!mPathFinder.isPathConstructed() || cellChange)
-        {
-            mCellX = cell->mData.mX;
-            mCellY = cell->mData.mY;
-            return true;
-        }
-        return false;
-    }
-
-    int AiTravel::getTypeId() const
-    {
-        return TypeIdTravel;
     }
 
     void AiTravel::fastForward(const MWWorld::Ptr& actor, AiState& state)
@@ -91,19 +98,36 @@ namespace MWMechanics
         // that is the user's responsibility
         MWBase::Environment::get().getWorld()->moveObject(actor, mX, mY, mZ);
         actor.getClass().adjustPosition(actor, false);
+        reset();
     }
 
     void AiTravel::writeState(ESM::AiSequence::AiSequence &sequence) const
     {
-        std::auto_ptr<ESM::AiSequence::AiTravel> travel(new ESM::AiSequence::AiTravel());
+        std::unique_ptr<ESM::AiSequence::AiTravel> travel(new ESM::AiSequence::AiTravel());
         travel->mData.mX = mX;
         travel->mData.mY = mY;
         travel->mData.mZ = mZ;
+        travel->mHidden = mHidden;
 
         ESM::AiSequence::AiPackageContainer package;
         package.mType = ESM::AiSequence::Ai_Travel;
         package.mPackage = travel.release();
         sequence.mPackages.push_back(package);
+    }
+
+    AiInternalTravel::AiInternalTravel(float x, float y, float z)
+        : AiTravel(x, y, z, this)
+    {
+    }
+
+    AiInternalTravel::AiInternalTravel(const ESM::AiSequence::AiTravel* travel)
+        : AiTravel(travel->mData.mX, travel->mData.mY, travel->mData.mZ, this)
+    {
+    }
+
+    std::unique_ptr<AiPackage> AiInternalTravel::clone() const
+    {
+        return std::make_unique<AiInternalTravel>(*this);
     }
 }
 

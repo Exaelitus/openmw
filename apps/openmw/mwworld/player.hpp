@@ -1,6 +1,8 @@
 #ifndef GAME_MWWORLD_PLAYER_H
 #define GAME_MWWORLD_PLAYER_H
 
+#include <map>
+
 #include "../mwworld/refdata.hpp"
 #include "../mwworld/livecellref.hpp"
 
@@ -25,6 +27,7 @@ namespace Loading
 namespace MWWorld
 {
     class CellStore;
+    class ConstPtr;
 
     /// \brief NPC object representing the player and additional player data
     class Player
@@ -36,32 +39,36 @@ namespace MWWorld
         osg::Vec3f mLastKnownExteriorPosition;
 
         ESM::Position           mMarkedPosition;
-        // If no position was marked, this is NULL
+        // If no position was marked, this is nullptr
         CellStore*              mMarkedCell;
 
         bool                    mAutoMove;
-        int                     mForwardBackward;
+        float                   mForwardBackward;
         bool                    mTeleported;
 
         int                     mCurrentCrimeId;    // the id assigned witnesses
         int                     mPaidCrimeId;      // the last id paid off (0 bounty)
 
-        // Saved skills and attributes prior to becoming a werewolf
+        typedef std::map<std::string, std::string> PreviousItems; // previous equipped items, needed for bound spells
+        PreviousItems mPreviousItems;
+
+        // Saved stats prior to becoming a werewolf
         MWMechanics::SkillValue mSaveSkills[ESM::Skill::Length];
         MWMechanics::AttributeValue mSaveAttributes[ESM::Attribute::Length];
 
         bool mAttackingOrSpell;
+        bool mJumping;
 
     public:
 
         Player(const ESM::NPC *player);
 
-        void saveSkillsAttributes();
-        void restoreSkillsAttributes();
-        void setWerewolfSkillsAttributes();
+        void saveStats();
+        void restoreStats();
+        void setWerewolfStats();
 
         // For mark/recall magic effects
-        void markPosition (CellStore* markedCell, ESM::Position markedPosition);
+        void markPosition (CellStore* markedCell, const ESM::Position& markedPosition);
         void getMarkedPosition (CellStore*& markedCell, ESM::Position& markedPosition) const;
 
         /// Interiors can not always be mapped to a world position. However
@@ -75,6 +82,7 @@ namespace MWWorld
         void setCell (MWWorld::CellStore *cellStore);
 
         MWWorld::Ptr getPlayer();
+        MWWorld::ConstPtr getConstPlayer() const;
 
         void setBirthSign(const std::string &sign);
         const std::string &getBirthSign() const;
@@ -88,9 +96,9 @@ namespace MWWorld
         bool getAutoMove() const;
         void setAutoMove (bool enable);
 
-        void setLeftRight (int value);
+        void setLeftRight (float value);
 
-        void setForwardBackward (int value);
+        void setForwardBackward (float value);
         void setUpDown(int value);
 
         void setRunState(bool run);
@@ -106,8 +114,13 @@ namespace MWWorld
         void setAttackingOrSpell(bool attackingOrSpell);
         bool getAttackingOrSpell() const;
 
+        void setJumping(bool jumping);
+        bool getJumping() const;
+
         ///Checks all nearby actors to see if anyone has an aipackage against you
         bool isInCombat();
+
+        bool enemiesNearby();
 
         void clear();
 
@@ -118,6 +131,12 @@ namespace MWWorld
         int getNewCrimeId();  // get new id for witnesses
         void recordCrimeId(); // record the paid crime id when bounty is 0
         int getCrimeId() const;     // get the last paid crime id
+
+        void setPreviousItem(const std::string& boundItemId, const std::string& previousItemId);
+        std::string getPreviousItem(const std::string& boundItemId);
+        void erasePreviousItem(const std::string& boundItemId);
+
+        void setSelectedSpell(const std::string& spellId);
     };
 }
 #endif

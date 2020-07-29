@@ -1,8 +1,6 @@
 #ifndef CS_EDITOR_H
 #define CS_EDITOR_H
 
-#include <memory>
-
 #include <boost/interprocess/sync/file_lock.hpp>
 #include <boost/filesystem/fstream.hpp>
 
@@ -30,11 +28,6 @@
 
 #include "view/tools/merge.hpp"
 
-namespace VFS
-{
-    class Manager;
-}
-
 namespace CSMDoc
 {
     class Document;
@@ -46,13 +39,9 @@ namespace CS
     {
             Q_OBJECT
 
-            // FIXME: should be moved to document, so we can have different resources for each opened project
-            std::auto_ptr<VFS::Manager> mVFS;
-
             Files::ConfigurationManager mCfgMgr;
             CSMPrefs::State mSettingsState;
             CSMDoc::DocumentManager mDocumentManager;
-            CSVDoc::ViewManager mViewManager;
             CSVDoc::StartupDialogue mStartup;
             CSVDoc::NewGameDialogue mNewGame;
             CSVPrefs::Dialogue mSettings;
@@ -64,8 +53,10 @@ namespace CS
             boost::filesystem::ofstream mPidFile;
             bool mFsStrict;
             CSVTools::Merge mMerge;
-
-            void setupDataFiles (const Files::PathContainer& dataDirs);
+            CSVDoc::ViewManager* mViewManager;
+            boost::filesystem::path mFileToLoad;
+            Files::PathContainer mDataDirs;
+            std::string mEncodingName;
 
             std::pair<Files::PathContainer, std::vector<std::string> > readConfig(bool quiet=false);
             ///< \return data paths
@@ -76,7 +67,7 @@ namespace CS
 
         public:
 
-            Editor ();
+            Editor (int argc, char **argv);
             ~Editor ();
 
             bool makeIPCServer();
@@ -93,7 +84,7 @@ namespace CS
             void cancelFileDialog();
 
             void loadDocument();
-            void openFiles (const boost::filesystem::path &path);
+            void openFiles (const boost::filesystem::path &path, const std::vector<boost::filesystem::path> &discoveredFiles = std::vector<boost::filesystem::path>());
             void createNewFile (const boost::filesystem::path& path);
             void createNewGame (const boost::filesystem::path& file);
 

@@ -24,9 +24,7 @@ namespace MWGui
         public:
             TravelWindow();
 
-            virtual void exit();
-
-            void startTravel(const MWWorld::Ptr& actor);
+            void setPtr (const MWWorld::Ptr& actor);
 
         protected:
             MyGUI::Button* mCancelButton;
@@ -42,8 +40,6 @@ namespace MWGui
             void addDestination(const std::string& name, ESM::Position pos, bool interior);
             void clearDestinations();
             int mCurrentY;
-
-            static const int sLineHeight;
 
             void updateLabels();
 

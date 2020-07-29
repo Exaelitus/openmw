@@ -38,16 +38,17 @@ CSMTools::MergeOperation::MergeOperation (CSMDoc::Document& document, ToUTF8::Fr
     appendStage (new MergeRefIdsStage (mState));
     appendStage (new MergeReferencesStage (mState));
     appendStage (new MergeReferencesStage (mState));
-    appendStage (new ListLandTexturesMergeStage (mState));
-    appendStage (new MergeLandTexturesStage (mState));
+    appendStage (new PopulateLandTexturesMergeStage (mState));
     appendStage (new MergeLandStage (mState));
+    appendStage (new FixLandsAndLandTexturesMergeStage (mState));
+    appendStage (new CleanupLandTexturesMergeStage (mState));
 
     appendStage (new FinishMergedDocumentStage (mState, encoding));
 }
 
-void CSMTools::MergeOperation::setTarget (std::auto_ptr<CSMDoc::Document> document)
+void CSMTools::MergeOperation::setTarget (std::unique_ptr<CSMDoc::Document> document)
 {
-    mState.mTarget = document;
+    mState.mTarget = std::move(document);
 }
 
 void CSMTools::MergeOperation::operationDone()
